@@ -1,0 +1,48 @@
+[
+  {
+    "product_id": 1005006000000001,
+    "product_title": "Universal Aluminum Phone Stand Holder Foldable Desk Adjustable",
+    "product_main_image_url": "https://ae01.alicdn.com/kf/img1.jpg",
+    "product_small_image_urls": {"string": ["https://ae01.alicdn.com/kf/img2.jpg", "https://ae01.alicdn.com/kf/img3.jpg"]},
+    "product_detail_url": "https://www.aliexpress.com/item/1005006000000001.html",
+    "target_sale_price": "17.99",
+    "target_sale_price_currency": "USD",
+    "evaluate_rate": "95.2%",
+    "lastest_volume": 540,
+    "second_level_category_name": "Phone Holders & Stands"
+  },
+  {
+    "product_id": 1005006000000002,
+    "product_title": "Magnetic Wireless Car Charger Mount 15W Fast Charging Auto Clamp",
+    "product_main_image_url": "https://ae01.alicdn.com/kf/img4.jpg",
+    "product_small_image_urls": {"string": ["https://ae01.alicdn.com/kf/img5.jpg"]},
+    "target_sale_price": "22.50",
+    "evaluate_rate": "92.0%",
+    "lastest_volume": 310,
+    "second_level_category_name": "Car Mounts"
+  },
+  {
+    "product_id": 1005006000000003,
+    "product_title": "Apple iPhone 15 Pro Clear Case Shockproof",
+    "product_main_image_url": "https://ae01.alicdn.com/kf/img6.jpg",
+    "target_sale_price": "16.00",
+    "evaluate_rate": "99.0%",
+    "lastest_volume": 999
+  },
+  {
+    "product_id": 1005006000000004,
+    "product_title": "Mini Keychain Trinket Charm",
+    "product_main_image_url": "https://ae01.alicdn.com/kf/img7.jpg",
+    "target_sale_price": "3.00",
+    "evaluate_rate": "98.0%",
+    "lastest_volume": 999
+  },
+  {
+    "product_id": 1005006000000005,
+    "product_title": "Herbal Slimming Weight Loss Supplement Capsules",
+    "product_main_image_url": "https://ae01.alicdn.com/kf/img8.jpg",
+    "target_sale_price": "25.00",
+    "evaluate_rate": "97.0%",
+    "lastest_volume": 800
+  }
+]

@@ -1,0 +1,74 @@
+name: Daily eBay auto-lister
+
+# Runs unattended in GitHub's cloud (your computer can be off).
+# NOTE: cron is in UTC and may start a few minutes late. Pick a UTC time that
+# matches the local time you want. Example: 14:00 UTC. Change the line below.
+on:
+  schedule:
+    - cron: "0 14 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Source + validate only (no eBay listing, no email)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # allows committing updated history back to the repo
+
+concurrency:
+  group: daily-ebay-lister
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    env:
+      # --- non-secret config (committed) ---
+      EBAY_ACCOUNT_CONFIG: ebay-account.json
+      HISTORY_PATH: state/resale-product-history.jsonl
+      RUNS_DIR: ebay-listing-runs
+      RUN_TZ: ${{ vars.RUN_TZ || 'Asia/Kolkata' }}
+      # --- eBay secrets ---
+      EBAY_CLIENT_ID: ${{ secrets.EBAY_CLIENT_ID }}
+      EBAY_CLIENT_SECRET: ${{ secrets.EBAY_CLIENT_SECRET }}
+      EBAY_RUNAME: ${{ secrets.EBAY_RUNAME }}
+      EBAY_REFRESH_TOKEN: ${{ secrets.EBAY_REFRESH_TOKEN }}
+      # --- AliExpress secrets ---
+      ALIEXPRESS_APP_KEY: ${{ secrets.ALIEXPRESS_APP_KEY }}
+      ALIEXPRESS_APP_SECRET: ${{ secrets.ALIEXPRESS_APP_SECRET }}
+      ALIEXPRESS_TRACKING_ID: ${{ secrets.ALIEXPRESS_TRACKING_ID }}
+      # --- email secrets ---
+      NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
+      NOTIFY_FROM: ${{ secrets.NOTIFY_FROM }}
+      SMTP_HOST: ${{ vars.SMTP_HOST || 'smtp.gmail.com' }}
+      SMTP_PORT: ${{ vars.SMTP_PORT || '587' }}
+      SMTP_USER: ${{ secrets.SMTP_USER }}
+      SMTP_PASS: ${{ secrets.SMTP_PASS }}
+      SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run daily lister
+        run: |
+          python find-and-prepare-ebay-listings/scripts/daily_run.py \
+            ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '--dry-run' || '' }}
+
+      - name: Heartbeat + persist history
+        if: always()
+        run: |
+          mkdir -p state
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > state/last-run.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add state
+          if git diff --cached --quiet; then
+            echo "No history changes to commit."
+          else
+            git commit -m "daily run heartbeat + history $(date -u +%F)"
+            git push
+          fi

@@ -1,0 +1,11 @@
+{
+  "marketplace_id": "EBAY_US",
+  "locale": "en-US",
+  "merchant_location_key": "irvine-92618",
+  "payment_policy_id": "REPLACE_WITH_YOUR_PAYMENT_POLICY_ID",
+  "return_policy_id": "REPLACE_WITH_YOUR_RETURN_POLICY_ID",
+  "fulfillment_policy_id": "REPLACE_WITH_YOUR_SHIPPING_POLICY_ID",
+  "campaign_id": "REPLACE_WITH_YOUR_10PCT_CAMPAIGN_ID",
+  "campaign_name": "Codex API Listings 10 Percent",
+  "promoted_rate_percent": "10.0"
+}

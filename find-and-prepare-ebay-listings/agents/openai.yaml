@@ -1,0 +1,4 @@
+interface:
+  display_name: "Find and Prepare eBay Listings"
+  short_description: "Prepare two eBay API offers for approval"
+  default_prompt: "Use $find-and-prepare-ebay-listings to find today’s two products and prepare complete unpublished eBay API offers for my review."

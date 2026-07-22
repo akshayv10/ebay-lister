@@ -1,0 +1,16 @@
+# Per-run listing artifacts are local/CI scratch — history lives in state/.
+ebay-listing-runs/
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+
+# Never commit secrets. eBay/AliExpress/email credentials belong in GitHub
+# Actions Secrets, NOT in the repo. ebay-account.json holds only non-secret
+# policy IDs and IS committed on purpose.
+.env
+.env.local
+*.pem
