@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Offline tests for the AliExpress sourcing mapping and gates. Never hits the network."""
+"""Offline tests for the AliExpress Dropshipping (DS) sourcing mapping and gates.
+Never hits the network (fixture mode)."""
 
 from __future__ import annotations
 
 import os
+from decimal import Decimal
 from pathlib import Path
 
 import ali_api
@@ -12,51 +14,52 @@ from listing_job import normalize_source
 FIXTURE = Path(__file__).with_name("fixtures") / "ali_sample.json"
 
 
-def _fixture_products() -> list[dict]:
+def _details() -> list[dict]:
     os.environ["ALI_API_FIXTURE"] = str(FIXTURE)
-    return ali_api.search_products("anything")
+    return ali_api.discover("anything", 1)
 
 
-def test_field_extraction() -> None:
-    products = _fixture_products()
-    stand = products[0]
-    assert ali_api.extract_product_id(stand) == "1005006000000001"
-    assert ali_api.extract_price_usd(stand) == __import__("decimal").Decimal("17.99")
-    assert ali_api.extract_evaluate_rate(stand) == 95.2
-    assert ali_api.extract_orders(stand) == 540
-    images = ali_api.extract_images(stand)
-    assert len(images) == 3 and all(u.startswith("https://") for u in images)
+def test_flatten_reads_ds_dtos() -> None:
+    stand = _details()[0]
+    flat = ali_api.flatten_detail(stand)
+    assert flat["id"] == "1005006000000001"
+    assert flat["rating"] == 4.8
+    assert flat["reviews"] == 320
+    assert flat["orders"] == 540
+    assert flat["price"] == Decimal("17.99")
+    assert flat["sku_id"] == "12000012345001"
+    assert len(flat["images"]) == 3 and all(u.startswith("https://") for u in flat["images"])
 
 
 def test_gates_reject_expected() -> None:
-    products = _fixture_products()
-    assert ali_api.gate_reason(products[0]) is None            # eligible
-    assert ali_api.gate_reason(products[1]) is None            # eligible
-    assert ali_api.gate_reason(products[2]) == "excluded brand"  # Apple iPhone
-    assert ali_api.gate_reason(products[3]) is not None        # price too low
-    assert ali_api.gate_reason(products[4]) == "restricted category"  # supplement
+    d = _details()
+    f = ali_api.flatten_detail
+    assert ali_api.gate_reason(f(d[0])) is None                  # eligible
+    assert ali_api.gate_reason(f(d[1])) is None                  # eligible (rating 4.6, 90 reviews)
+    assert ali_api.gate_reason(f(d[2])) == "excluded brand"      # Apple iPhone
+    assert ali_api.gate_reason(f(d[3])) == "reviews < 25"        # only 5 reviews
+    assert ali_api.gate_reason(f(d[4])) == "restricted category" # supplement
+    assert ali_api.gate_reason(f(d[5])) == f"price < {ali_api.MIN_PRICE_USD}"  # $3.00
 
 
 def test_source_is_schema_valid() -> None:
-    products = _fixture_products()
-    source = ali_api.product_to_source(products[0], "Smartphone Accessories", "20260722T090000", "2026-07-22")
-    # normalize_source raises on any schema violation; a clean return proves compatibility.
-    normalized = normalize_source(source)
+    flat = ali_api.flatten_detail(_details()[0])
+    source = ali_api.product_to_source(flat, "Smartphone Accessories", "20260722T090000", "2026-07-22")
+    normalized = normalize_source(source)  # raises on any schema violation
     assert normalized["product_id"] == "1005006000000001"
     assert normalized["product_id"] in normalized["aliexpress_url"]
     assert len(normalized["listing_title"]) <= 80
     assert normalized["selected_variants"][0]["sku"].startswith("ALI-1005006000000001-")
     assert normalized["aspects"]["Brand"] == ["Unbranded"]
+    assert len(normalized["source_images"]) == 3
 
 
 def test_source_products_finds_two() -> None:
     os.environ["ALI_API_FIXTURE"] = str(FIXTURE)
-    sources, notes = ali_api.source_products(
+    sources, _ = ali_api.source_products(
         "Smartphone Accessories", "20260722T090000", "2026-07-22", history=[], needed=2
     )
-    assert len(sources) == 2
-    ids = {s["product_id"] for s in sources}
-    assert ids == {"1005006000000001", "1005006000000002"}
+    assert {s["product_id"] for s in sources} == {"1005006000000001", "1005006000000002"}
 
 
 def test_history_dedup_skips_known_product() -> None:
@@ -66,14 +69,13 @@ def test_history_dedup_skips_known_product() -> None:
     sources, _ = ali_api.source_products(
         "Smartphone Accessories", "20260722T090000", "2026-07-22", history=history, needed=2
     )
-    # Only one other eligible product exists in the fixture, so dedup leaves one.
     ids = {s["product_id"] for s in sources}
     assert "1005006000000001" not in ids
     assert ids == {"1005006000000002"}
 
 
 def _run_all() -> int:
-    tests = [value for name, value in sorted(globals().items()) if name.startswith("test_") and callable(value)]
+    tests = [v for n, v in sorted(globals().items()) if n.startswith("test_") and callable(v)]
     failures = 0
     for test in tests:
         try:

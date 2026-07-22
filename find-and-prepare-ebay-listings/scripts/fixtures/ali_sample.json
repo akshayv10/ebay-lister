@@ -1,48 +1,82 @@
 [
   {
-    "product_id": 1005006000000001,
-    "product_title": "Universal Aluminum Phone Stand Holder Foldable Desk Adjustable",
-    "product_main_image_url": "https://ae01.alicdn.com/kf/img1.jpg",
-    "product_small_image_urls": {"string": ["https://ae01.alicdn.com/kf/img2.jpg", "https://ae01.alicdn.com/kf/img3.jpg"]},
-    "product_detail_url": "https://www.aliexpress.com/item/1005006000000001.html",
-    "target_sale_price": "17.99",
-    "target_sale_price_currency": "USD",
-    "evaluate_rate": "95.2%",
-    "lastest_volume": 540,
-    "second_level_category_name": "Phone Holders & Stands"
+    "ae_item_base_info_dto": {
+      "product_id": "1005006000000001",
+      "subject": "Universal Aluminum Phone Stand Holder Foldable Desk Adjustable",
+      "category_id": "200216119",
+      "avg_evaluation_rating": "4.8",
+      "evaluation_count": "320",
+      "sales_count": "540"
+    },
+    "ae_item_sku_info_dtos": {
+      "ae_item_sku_info_d_t_o": [
+        {"sku_id": "12000012345001", "offer_sale_price": "17.99", "sku_price": "25.99"}
+      ]
+    },
+    "ae_multimedia_info_dto": {
+      "image_urls": "https://ae01.alicdn.com/kf/img1.jpg;https://ae01.alicdn.com/kf/img2.jpg;https://ae01.alicdn.com/kf/img3.jpg"
+    }
   },
   {
-    "product_id": 1005006000000002,
-    "product_title": "Magnetic Wireless Car Charger Mount 15W Fast Charging Auto Clamp",
-    "product_main_image_url": "https://ae01.alicdn.com/kf/img4.jpg",
-    "product_small_image_urls": {"string": ["https://ae01.alicdn.com/kf/img5.jpg"]},
-    "target_sale_price": "22.50",
-    "evaluate_rate": "92.0%",
-    "lastest_volume": 310,
-    "second_level_category_name": "Car Mounts"
+    "ae_item_base_info_dto": {
+      "product_id": "1005006000000002",
+      "subject": "Magnetic Wireless Car Charger Mount 15W Fast Charging Auto Clamp",
+      "category_id": "200216120",
+      "avg_evaluation_rating": "4.6",
+      "evaluation_count": "90",
+      "sales_count": "310"
+    },
+    "ae_item_sku_info_dtos": {
+      "ae_item_sku_info_d_t_o": [
+        {"sku_id": "12000012345002", "offer_sale_price": "22.50", "sku_price": "29.90"}
+      ]
+    },
+    "ae_multimedia_info_dto": {
+      "image_urls": "https://ae01.alicdn.com/kf/img4.jpg;https://ae01.alicdn.com/kf/img5.jpg"
+    }
   },
   {
-    "product_id": 1005006000000003,
-    "product_title": "Apple iPhone 15 Pro Clear Case Shockproof",
-    "product_main_image_url": "https://ae01.alicdn.com/kf/img6.jpg",
-    "target_sale_price": "16.00",
-    "evaluate_rate": "99.0%",
-    "lastest_volume": 999
+    "ae_item_base_info_dto": {
+      "product_id": "1005006000000003",
+      "subject": "Apple iPhone 15 Pro Clear Case Shockproof",
+      "avg_evaluation_rating": "4.9",
+      "evaluation_count": "500",
+      "sales_count": "999"
+    },
+    "ae_item_sku_info_dtos": {"ae_item_sku_info_d_t_o": [{"sku_id": "s3", "offer_sale_price": "16.00"}]},
+    "ae_multimedia_info_dto": {"image_urls": "https://ae01.alicdn.com/kf/img6.jpg"}
   },
   {
-    "product_id": 1005006000000004,
-    "product_title": "Mini Keychain Trinket Charm",
-    "product_main_image_url": "https://ae01.alicdn.com/kf/img7.jpg",
-    "target_sale_price": "3.00",
-    "evaluate_rate": "98.0%",
-    "lastest_volume": 999
+    "ae_item_base_info_dto": {
+      "product_id": "1005006000000004",
+      "subject": "Foldable Storage Basket Organizer Bin",
+      "avg_evaluation_rating": "4.9",
+      "evaluation_count": "5",
+      "sales_count": "999"
+    },
+    "ae_item_sku_info_dtos": {"ae_item_sku_info_d_t_o": [{"sku_id": "s4", "offer_sale_price": "19.00"}]},
+    "ae_multimedia_info_dto": {"image_urls": "https://ae01.alicdn.com/kf/img7.jpg"}
   },
   {
-    "product_id": 1005006000000005,
-    "product_title": "Herbal Slimming Weight Loss Supplement Capsules",
-    "product_main_image_url": "https://ae01.alicdn.com/kf/img8.jpg",
-    "target_sale_price": "25.00",
-    "evaluate_rate": "97.0%",
-    "lastest_volume": 800
+    "ae_item_base_info_dto": {
+      "product_id": "1005006000000005",
+      "subject": "Herbal Slimming Weight Loss Supplement Capsules",
+      "avg_evaluation_rating": "4.8",
+      "evaluation_count": "200",
+      "sales_count": "800"
+    },
+    "ae_item_sku_info_dtos": {"ae_item_sku_info_d_t_o": [{"sku_id": "s5", "offer_sale_price": "25.00"}]},
+    "ae_multimedia_info_dto": {"image_urls": "https://ae01.alicdn.com/kf/img8.jpg"}
+  },
+  {
+    "ae_item_base_info_dto": {
+      "product_id": "1005006000000006",
+      "subject": "Mini Keychain Trinket Charm",
+      "avg_evaluation_rating": "4.9",
+      "evaluation_count": "150",
+      "sales_count": "999"
+    },
+    "ae_item_sku_info_dtos": {"ae_item_sku_info_d_t_o": [{"sku_id": "s6", "offer_sale_price": "3.00"}]},
+    "ae_multimedia_info_dto": {"image_urls": "https://ae01.alicdn.com/kf/img9.jpg"}
   }
 ]

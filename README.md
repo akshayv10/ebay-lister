@@ -44,9 +44,15 @@ Everything is Python 3.11 standard library — no third-party packages.
    `find-and-prepare-ebay-listings.production`.)
 
 ### 2. AliExpress
-Register an app on the AliExpress Open Platform and request the **Affiliate API**
-(fast to approve; returns rating, order volume, price, and main images). Note the
-App Key, App Secret, and Tracking ID.
+Register an app on the AliExpress Open Platform as a **Dropshipping (individual)**
+developer. Sourcing uses the **DS API** (`aliexpress.ds.product.get` for the real
+star rating / review count / sales count / price / main images, and
+`aliexpress.ds.freight.calculate` for real US shipping cost). Note the App Key,
+App Secret, and Tracking ID.
+
+> If the granted app exposes a different product-discovery method, set
+> `ALI_DS_DISCOVERY` (`auto` | `text` | `feed`) and, for feed mode,
+> `ALI_DS_FEED_NAME`. The authoritative gating (`ds.product.get`) is method-agnostic.
 
 ### 3. Email
 Easiest: a Gmail **App Password** (Google Account → Security → App passwords).
@@ -84,6 +90,8 @@ ALI_API_FIXTURE="$PWD/fixtures/ali_sample.json" \
 
 ## Tuning (environment variables)
 
-`ALI_MIN_EVALUATE_RATE_PCT` (90), `ALI_MIN_ORDERS` (100), `ALI_MIN_PRICE_USD` (15),
-`ALI_SHIPPING_PCT` / `ALI_SHIPPING_FLAT` (delivered-cost estimate for eBay pricing).
+`ALI_MIN_RATING` (4.5), `ALI_MIN_REVIEWS` (25), `ALI_MIN_ORDERS` (100),
+`ALI_MIN_PRICE_USD` (15), `ALI_USE_FREIGHT` (1), `ALI_SHIPPING_PCT` /
+`ALI_SHIPPING_FLAT` (delivered-cost estimate when freight lookup is unavailable),
+`ALI_DS_DISCOVERY` (auto|text|feed), `ALI_DS_FEED_NAME`.
 Niche search queries live in `ali_api.py` (`NICHE_QUERIES`).

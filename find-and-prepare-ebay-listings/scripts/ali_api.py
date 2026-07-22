@@ -1,17 +1,23 @@
 #!/usr/bin/env python3
-"""AliExpress Open Platform sourcing: search products, apply the daily-sourcing
-eligibility gates, and emit per-product ``source.json`` payloads that
-``listing_job.py`` / ``ebay_listing.py`` consume.
+"""AliExpress **Dropshipping (DS) API** sourcing: discover products, apply the
+daily-sourcing eligibility gates, and emit per-product ``source.json`` payloads
+that ``listing_job.py`` / ``ebay_listing.py`` consume.
 
-This replaces the browser-based sourcing described in references/daily-sourcing.md
-with pure API calls so the daily job can run unattended (no browser, computer off).
+Replaces browser-based sourcing (references/daily-sourcing.md) with pure API calls
+so the daily job runs unattended (no browser, computer off).
 
-Credentials come from the environment:
-  ALIEXPRESS_APP_KEY, ALIEXPRESS_APP_SECRET, ALIEXPRESS_TRACKING_ID
+Two-step sourcing per candidate:
+  1. Discovery -> candidate product IDs (aliexpress.ds.text.search, or the
+     recommend-feed method). Env ALI_DS_DISCOVERY = auto | text | feed.
+  2. Authoritative detail -> gates (aliexpress.ds.product.get), which returns a real
+     1-5 star rating, review count, sales count, per-SKU price, and main images.
+Delivered cost uses aliexpress.ds.freight.calculate when available, else an estimate.
 
-Offline/testing: set ALI_API_FIXTURE to a JSON file containing a list of raw
-product dicts (or {"products": [...]}) and no network call is made — used by
-`daily_run.py --dry-run` and the unit tests.
+Credentials (environment): ALIEXPRESS_APP_KEY, ALIEXPRESS_APP_SECRET, ALIEXPRESS_TRACKING_ID.
+
+Offline/testing: set ALI_API_FIXTURE to a JSON file with a list of DS ``product.get``
+result objects (each containing ``ae_item_base_info_dto``). No network call is made —
+used by ``daily_run.py --dry-run`` and the unit tests.
 """
 
 from __future__ import annotations
@@ -33,18 +39,20 @@ from daily_history import normalized_identity, same_record
 
 GATEWAY_URL = os.environ.get("ALIEXPRESS_GATEWAY", "https://api-sg.aliexpress.com/sync")
 SHIP_TO_COUNTRY = os.environ.get("ALI_SHIP_TO_COUNTRY", "US")
+SEND_FROM_COUNTRY = os.environ.get("ALI_SEND_FROM_COUNTRY", "CN")
 TARGET_CURRENCY = os.environ.get("ALI_TARGET_CURRENCY", "USD")
 TARGET_LANGUAGE = os.environ.get("ALI_TARGET_LANGUAGE", "EN")
+DISCOVERY_MODE = os.environ.get("ALI_DS_DISCOVERY", "auto").strip().lower()  # auto|text|feed
+USE_FREIGHT = os.environ.get("ALI_USE_FREIGHT", "1").strip().lower() in {"1", "true", "yes", "on"}
 
-# Eligibility thresholds (see references/daily-sourcing.md). Coarser than the
-# browser page because the Affiliate API does not expose an exact star rating or
-# review count; evaluate_rate (positive-feedback %) approximates the star rating
-# (90% ~= 4.5 stars) and order volume stands in for the review-count gate.
-MIN_EVALUATE_RATE_PCT = float(os.environ.get("ALI_MIN_EVALUATE_RATE_PCT", "90"))
+# Eligibility thresholds (references/daily-sourcing.md). The DS product.get response
+# provides a real star rating and review count, so these gates are exact (unlike the
+# Affiliate API, which could only approximate them).
+MIN_RATING = float(os.environ.get("ALI_MIN_RATING", "4.5"))
+MIN_REVIEWS = int(os.environ.get("ALI_MIN_REVIEWS", "25"))
 MIN_ORDERS = int(os.environ.get("ALI_MIN_ORDERS", "100"))
 MIN_PRICE_USD = Decimal(os.environ.get("ALI_MIN_PRICE_USD", "15"))
-# Delivered-cost estimate for eBay pricing (AliExpress ships many items free to the
-# US; the seller revises the price after posting). delivered = price*pct + flat.
+# Delivered-cost estimate used only when freight lookup is unavailable/failed.
 SHIP_PCT = Decimal(os.environ.get("ALI_SHIPPING_PCT", "0"))
 SHIP_FLAT = Decimal(os.environ.get("ALI_SHIPPING_FLAT", "0"))
 
@@ -98,7 +106,7 @@ class AliError(RuntimeError):
     pass
 
 
-# --- Field extraction (defensive against Affiliate API response shapes) -----------
+# --- Small parsing helpers (tolerant of TOP response wrapping) --------------------
 
 def _first_str(value: Any) -> str:
     if isinstance(value, str):
@@ -106,7 +114,6 @@ def _first_str(value: Any) -> str:
     if isinstance(value, (int, float)):
         return str(value)
     if isinstance(value, dict):
-        # Common TOP wrapping: {"string": [...]} or {"number": [...]}.
         for key in ("string", "number", "value"):
             if key in value:
                 return _first_str(value[key])
@@ -124,8 +131,7 @@ def _string_list(value: Any) -> list[str]:
                 return _string_list(value[key])
         return []
     if isinstance(value, str):
-        # Occasionally a comma/`;`-joined string.
-        parts = re.split(r"[;,]\s*", value.strip()) if value.strip() else []
+        parts = re.split(r"[;\n,]\s*", value.strip()) if value.strip() else []
         return [p for p in parts if p]
     if isinstance(value, Iterable):
         out: list[str] = []
@@ -146,72 +152,107 @@ def _https(url: str) -> str:
     return url
 
 
-def product_field(product: dict[str, Any], *names: str) -> Any:
-    for name in names:
-        if name in product and product[name] not in (None, ""):
-            return product[name]
-    return None
+def detail_url(product_id: str) -> str:
+    return f"https://www.aliexpress.us/item/{product_id}.html"
 
 
-def extract_product_id(product: dict[str, Any]) -> str:
-    raw = _first_str(product_field(product, "product_id", "productId", "item_id"))
-    match = re.search(r"\d{8,20}", raw)
-    return match.group(0) if match else ""
+# --- DS product.get parsing -> flat detail ----------------------------------------
+
+def _find_result(payload: Any) -> dict[str, Any]:
+    """Depth-first search for the dict that holds ``ae_item_base_info_dto``.
+    Handles both the raw API envelope and a fixture that already is the result."""
+    stack: list[Any] = [payload]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            if "ae_item_base_info_dto" in node:
+                return node
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+    return {}
 
 
-def extract_price_usd(product: dict[str, Any]) -> Decimal | None:
-    raw = _first_str(product_field(
-        product, "target_sale_price", "target_app_sale_price", "sale_price", "app_sale_price"
-    ))
-    raw = re.sub(r"[^0-9.]", "", raw)
-    if not raw:
+def _sku_list(result: dict[str, Any]) -> list[dict[str, Any]]:
+    node = result.get("ae_item_sku_info_dtos")
+    if isinstance(node, dict):
+        for key in ("ae_item_sku_info_d_t_o", "ae_item_sku_info_dto"):
+            if isinstance(node.get(key), list):
+                return [s for s in node[key] if isinstance(s, dict)]
+    if isinstance(node, list):
+        return [s for s in node if isinstance(s, dict)]
+    return []
+
+
+def _decimal(raw: Any) -> Decimal | None:
+    cleaned = re.sub(r"[^0-9.]", "", _first_str(raw))
+    if not cleaned:
         return None
     try:
-        return Decimal(raw)
-    except Exception:  # noqa: BLE001 - malformed price is simply ineligible
+        return Decimal(cleaned)
+    except Exception:  # noqa: BLE001
         return None
 
 
-def extract_evaluate_rate(product: dict[str, Any]) -> float:
-    raw = _first_str(product_field(product, "evaluate_rate", "positive_feedback_rate", "avg_evaluation_rate"))
-    match = re.search(r"[\d.]+", raw)
-    return float(match.group(0)) if match else 0.0
+def _min_sku_price(result: dict[str, Any]) -> tuple[Decimal | None, str]:
+    """Return the lowest single-unit price across SKUs and that SKU's id."""
+    best: Decimal | None = None
+    best_sku = ""
+    for sku in _sku_list(result):
+        price = None
+        for key in ("offer_sale_price", "sku_price", "offer_price"):
+            price = _decimal(sku.get(key))
+            if price is not None:
+                break
+        if price is None:
+            continue
+        if best is None or price < best:
+            best = price
+            best_sku = _first_str(sku.get("sku_id") or sku.get("id") or sku.get("skuId"))
+    return best, best_sku
 
 
-def extract_orders(product: dict[str, Any]) -> int:
-    raw = _first_str(product_field(product, "lastest_volume", "latest_volume", "orders", "sales"))
-    match = re.search(r"\d+", raw.replace(",", ""))
-    return int(match.group(0)) if match else 0
-
-
-def extract_images(product: dict[str, Any]) -> list[str]:
-    images: list[str] = []
-    main = _first_str(product_field(product, "product_main_image_url", "image_url", "main_image"))
-    if main:
-        images.append(_https(main))
-    for url in _string_list(product_field(product, "product_small_image_urls", "small_image_urls", "image_urls")):
-        images.append(_https(url))
+def _images(result: dict[str, Any]) -> list[str]:
+    media = result.get("ae_multimedia_info_dto")
+    raw = media.get("image_urls") if isinstance(media, dict) else None
+    urls = _string_list(raw)
     seen: set[str] = set()
     unique: list[str] = []
-    for url in images:
-        if url.startswith("https://") and url not in seen:
-            seen.add(url)
-            unique.append(url)
+    for url in urls:
+        https = _https(url)
+        if https.startswith("https://") and https not in seen:
+            seen.add(https)
+            unique.append(https)
     return unique[:MAX_IMAGES]
 
 
-def extract_title(product: dict[str, Any]) -> str:
-    return _first_str(product_field(product, "product_title", "title", "subject"))
+def flatten_detail(detail: dict[str, Any]) -> dict[str, Any]:
+    """Normalize a DS product.get result (or fixture) into a flat dict for gating."""
+    result = _find_result(detail)
+    base = result.get("ae_item_base_info_dto") if isinstance(result.get("ae_item_base_info_dto"), dict) else {}
+    product_id = _first_str(base.get("product_id") or base.get("productId"))
+    if not product_id:
+        # fall back to any product id anywhere in the payload
+        match = re.search(r"\d{8,20}", _first_str(base.get("subject")) or "")
+        product_id = match.group(0) if match else _first_id_anywhere(detail)
+    price, sku_id = _min_sku_price(result)
+    rating_raw = _first_str(base.get("avg_evaluation_rating") or base.get("evaluation_rating"))
+    return {
+        "id": product_id,
+        "title": _first_str(base.get("subject") or base.get("title")),
+        "rating": float(re.search(r"[\d.]+", rating_raw).group(0)) if re.search(r"[\d.]+", rating_raw) else 0.0,
+        "reviews": int(_first_str(base.get("evaluation_count") or base.get("review_count") or "0") or 0),
+        "orders": int(re.sub(r"\D", "", _first_str(base.get("sales_count") or base.get("order_count"))) or 0),
+        "price": price,
+        "sku_id": sku_id,
+        "images": _images(result),
+    }
 
 
-def extract_category(product: dict[str, Any]) -> str:
-    return _first_str(product_field(
-        product, "second_level_category_name", "first_level_category_name", "category_name"
-    ))
-
-
-def detail_url(product: dict[str, Any], product_id: str) -> str:
-    return f"https://www.aliexpress.us/item/{product_id}.html"
+def _first_id_anywhere(payload: Any) -> str:
+    for pid in _candidate_ids(payload):
+        return pid
+    return ""
 
 
 # --- Eligibility gates ------------------------------------------------------------
@@ -233,33 +274,36 @@ def restricted(title: str) -> bool:
     return any(term in lowered for term in RESTRICTED_TERMS)
 
 
-def gate_reason(product: dict[str, Any]) -> str | None:
-    """Return None if the product passes all gates, else a short failure reason."""
-    product_id = extract_product_id(product)
-    if not product_id:
+def gate_reason(flat: dict[str, Any]) -> str | None:
+    """None if the flat detail passes every gate, else a short failure reason."""
+    if not flat.get("id"):
         return "no product id"
-    title = extract_title(product)
+    title = flat.get("title", "")
     if not title:
         return "no title"
     if brand_excluded(title):
         return "excluded brand"
     if restricted(title):
         return "restricted category"
-    if extract_evaluate_rate(product) < MIN_EVALUATE_RATE_PCT:
-        return f"evaluate_rate < {MIN_EVALUATE_RATE_PCT}%"
-    if extract_orders(product) < MIN_ORDERS:
+    if flat.get("rating", 0.0) < MIN_RATING:
+        return f"rating < {MIN_RATING}"
+    if flat.get("reviews", 0) < MIN_REVIEWS:
+        return f"reviews < {MIN_REVIEWS}"
+    if flat.get("orders", 0) < MIN_ORDERS:
         return f"orders < {MIN_ORDERS}"
-    price = extract_price_usd(product)
+    price = flat.get("price")
     if price is None or price < MIN_PRICE_USD:
         return f"price < {MIN_PRICE_USD}"
-    if not extract_images(product):
+    if not flat.get("images"):
         return "no images"
     return None
 
 
 # --- source.json construction -----------------------------------------------------
 
-def delivered_total(price: Decimal) -> Decimal:
+def delivered_total(price: Decimal, shipping: Decimal | None) -> Decimal:
+    if shipping is not None:
+        return (price + shipping).quantize(Decimal("0.01"))
     return (price * (Decimal("1") + SHIP_PCT) + SHIP_FLAT).quantize(Decimal("0.01"))
 
 
@@ -273,30 +317,23 @@ def listing_title(title: str) -> str:
     return trimmed.strip() or title[:80]
 
 
-def product_to_source(
-    product: dict[str, Any],
-    niche: str,
-    run_stamp: str,
-    local_date: str,
-) -> dict[str, Any]:
-    """Map a raw AliExpress product into a validated-shape source.json dict.
+def product_to_source(flat: dict[str, Any], niche: str, run_stamp: str, local_date: str) -> dict[str, Any]:
+    """Map a flattened DS detail into a validated-shape source.json dict.
     Raises AliError if the product does not pass the gates."""
-    reason = gate_reason(product)
+    reason = gate_reason(flat)
     if reason is not None:
         raise AliError(f"Product ineligible: {reason}")
-    product_id = extract_product_id(product)
-    title = extract_title(product)
-    price = extract_price_usd(product)
-    assert price is not None  # guaranteed by gate_reason
-    images = extract_images(product)
-    category = extract_category(product) or "Accessories"
+    product_id = flat["id"]
+    title = flat["title"]
+    price = flat["price"]
+    shipping = freight(product_id, flat.get("sku_id", ""), price)
     ebay_title = listing_title(title)
     return {
         "run_id": f"{run_stamp}-product-{product_id}",
         "local_calendar_date": local_date,
         "assigned_niche": niche,
         "product_id": product_id,
-        "aliexpress_url": detail_url(product, product_id),
+        "aliexpress_url": detail_url(product_id),
         "source_title": title,
         "functional_fingerprint": normalized_identity(title),
         "verified_brand": "Unbranded",
@@ -306,25 +343,28 @@ def product_to_source(
             "Please review the photos and item specifics before purchase."
         ),
         "condition": "NEW",
-        "category_query": category,
-        "aspects": {"Brand": ["Unbranded"], "Type": [category]},
-        "source_images": images,
+        # eBay taxonomy resolves well from the title; category-required item specifics
+        # are auto-filled downstream (EBAY_AUTOFILL_REQUIRED_ASPECTS), so we send only
+        # the verified Brand to avoid selection-only aspect conflicts.
+        "category_query": ebay_title,
+        "aspects": {"Brand": ["Unbranded"]},
+        "source_images": flat["images"],
         "selected_variants": [
             {
                 "id": "default",
                 "options": {},
                 "visible_item_price": f"{price:.2f}",
-                "delivered_total": f"{delivered_total(price):.2f}",
+                "delivered_total": f"{delivered_total(price, shipping):.2f}",
                 "quantity": 1,
             }
         ],
     }
 
 
-# --- AliExpress API transport (signed TOP gateway) --------------------------------
+# --- AliExpress TOP gateway transport (signed) ------------------------------------
 
 def _sign(params: dict[str, str], secret: str) -> str:
-    """HMAC-SHA256 signature over sorted key+value concatenation (sign_method=sha256)."""
+    """HMAC-SHA256 over sorted key+value concatenation (sign_method=sha256)."""
     concatenated = "".join(f"{key}{params[key]}" for key in sorted(params))
     return hmac.new(secret.encode("utf-8"), concatenated.encode("utf-8"), hashlib.sha256).hexdigest().upper()
 
@@ -345,11 +385,10 @@ def _call(method: str, business_params: dict[str, str]) -> dict[str, Any]:
     params.update({k: v for k, v in business_params.items() if v not in (None, "")})
     params["sign"] = _sign(params, app_secret)
     url = f"{GATEWAY_URL}?{urllib.parse.urlencode(params)}"
-    request = urllib.request.Request(url, method="GET")
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with urllib.request.urlopen(urllib.request.Request(url, method="GET"), timeout=30) as response:
             raw = response.read().decode("utf-8")
-    except Exception as exc:  # noqa: BLE001 - network/HTTP errors surface as AliError
+    except Exception as exc:  # noqa: BLE001
         raise AliError(f"AliExpress request failed for {method}: {exc}") from exc
     try:
         return json.loads(raw)
@@ -357,31 +396,134 @@ def _call(method: str, business_params: dict[str, str]) -> dict[str, Any]:
         raise AliError(f"AliExpress returned non-JSON for {method}: {raw[:300]}") from exc
 
 
-def _products_from_response(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    """Walk the nested Affiliate response to the product list, tolerant of shape."""
-    node: Any = payload
-    for _ in range(8):
+def _candidate_ids(payload: Any) -> list[str]:
+    """Collect product-id-like values anywhere in a discovery response."""
+    ids: list[str] = []
+    seen: set[str] = set()
+    stack: list[Any] = [payload]
+    while stack:
+        node = stack.pop()
         if isinstance(node, dict):
-            if "products" in node:
-                products = node["products"]
-                if isinstance(products, dict):
-                    products = products.get("product", products.get("products", []))
-                if isinstance(products, list):
-                    return [p for p in products if isinstance(p, dict)]
-            # descend into the single nested dict value that looks like a wrapper
-            next_node = None
-            for key in ("resp_result", "result", "aliexpress_affiliate_product_query_response",
-                        "aliexpress_affiliate_productdetail_get_response"):
-                if key in node and isinstance(node[key], dict):
-                    next_node = node[key]
-                    break
-            if next_node is None:
-                return []
-            node = next_node
-        else:
-            return []
-    return []
+            for key, value in node.items():
+                if key.lower() in {"product_id", "productid", "item_id", "itemid"}:
+                    match = re.search(r"\d{8,20}", _first_str(value))
+                    if match and match.group(0) not in seen:
+                        seen.add(match.group(0))
+                        ids.append(match.group(0))
+                else:
+                    stack.append(value)
+        elif isinstance(node, list):
+            stack.extend(node)
+    return ids
 
+
+# --- DS API methods ---------------------------------------------------------------
+
+def get_product_detail(product_id: str) -> dict[str, Any]:
+    payload = _call(
+        "aliexpress.ds.product.get",
+        {
+            "product_id": product_id,
+            "ship_to_country": SHIP_TO_COUNTRY,
+            "target_currency": TARGET_CURRENCY,
+            "target_language": TARGET_LANGUAGE,
+        },
+    )
+    return _find_result(payload)
+
+
+def freight(product_id: str, sku_id: str, price: Decimal) -> Decimal | None:
+    """Best-effort real US shipping cost. Returns None (caller uses the estimate)
+    on any error, in fixture mode, or when disabled."""
+    if not USE_FREIGHT or _load_fixture() is not None or not os.environ.get("ALIEXPRESS_APP_KEY", "").strip():
+        return None
+    try:
+        payload = _call(
+            "aliexpress.ds.freight.calculate",
+            {
+                "product_id": product_id,
+                "sku_id": sku_id,
+                "product_num": "1",
+                "country_code": SHIP_TO_COUNTRY,
+                "send_goods_country_code": SEND_FROM_COUNTRY,
+                "price": f"{price:.2f}",
+                "price_currency": TARGET_CURRENCY,
+            },
+        )
+    except AliError:
+        return None
+    costs: list[Decimal] = []
+    stack: list[Any] = [payload]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key.lower() in {"freight_amount", "amount", "shipping_fee", "fee"}:
+                    amount = _decimal(value.get("amount") if isinstance(value, dict) else value)
+                    if amount is not None:
+                        costs.append(amount)
+                else:
+                    stack.append(value)
+        elif isinstance(node, list):
+            stack.extend(node)
+    return min(costs) if costs else None
+
+
+def discover(query: str, page: int) -> list[dict[str, Any]]:
+    """Return candidate detail dicts (fixture) or lean cards with product ids."""
+    fixture = _load_fixture()
+    if fixture is not None:
+        return fixture
+    mode = DISCOVERY_MODE
+    if mode in {"auto", "text"}:
+        try:
+            payload = _call(
+                "aliexpress.ds.text.search",
+                {
+                    "keyWord": query,
+                    "countryCode": SHIP_TO_COUNTRY,
+                    "currency": TARGET_CURRENCY,
+                    "local": f"{TARGET_LANGUAGE.lower()}_{SHIP_TO_COUNTRY}",
+                    "pageIndex": str(page),
+                    "pageSize": str(PAGE_SIZE),
+                    "sortBy": "orders,desc",
+                },
+            )
+            ids = _candidate_ids(payload)
+            if ids:
+                return [{"__product_id__": pid} for pid in ids]
+        except AliError:
+            if mode == "text":
+                raise
+    # feed fallback
+    try:
+        payload = _call(
+            "aliexpress.ds.recommend.feed.get",
+            {
+                "feed_name": os.environ.get("ALI_DS_FEED_NAME", "DS bestselling products"),
+                "page_no": str(page),
+                "page_size": str(PAGE_SIZE),
+                "target_currency": TARGET_CURRENCY,
+                "target_language": TARGET_LANGUAGE,
+                "country": SHIP_TO_COUNTRY,
+            },
+        )
+        return [{"__product_id__": pid} for pid in _candidate_ids(payload)]
+    except AliError:
+        return []
+
+
+def _card_id(card: dict[str, Any]) -> str:
+    if "__product_id__" in card:
+        return str(card["__product_id__"])
+    return flatten_detail(card).get("id", "")
+
+
+def _card_is_detail(card: dict[str, Any]) -> bool:
+    return "ae_item_base_info_dto" in card or bool(_find_result(card))
+
+
+# --- Fixture (offline) ------------------------------------------------------------
 
 def _load_fixture() -> list[dict[str, Any]] | None:
     path = os.environ.get("ALI_API_FIXTURE", "").strip()
@@ -396,33 +538,10 @@ def _load_fixture() -> list[dict[str, Any]] | None:
     return [p for p in data if isinstance(p, dict)]
 
 
-def search_products(keywords: str, page_no: int = 1, page_size: int = PAGE_SIZE) -> list[dict[str, Any]]:
-    fixture = _load_fixture()
-    if fixture is not None:
-        return fixture
-    payload = _call(
-        "aliexpress.affiliate.product.query",
-        {
-            "keywords": keywords,
-            "page_no": str(page_no),
-            "page_size": str(page_size),
-            "target_currency": TARGET_CURRENCY,
-            "target_language": TARGET_LANGUAGE,
-            "ship_to_country": SHIP_TO_COUNTRY,
-            "tracking_id": os.environ.get("ALIEXPRESS_TRACKING_ID", ""),
-            "sort": "LAST_VOLUME_DESC",
-        },
-    )
-    return _products_from_response(payload)
-
-
 # --- High-level sourcing loop -----------------------------------------------------
 
-def _duplicate(record_view: dict[str, Any], history: list[dict[str, Any]], accepted: list[dict[str, Any]]) -> bool:
-    for existing in list(history) + accepted:
-        if same_record(existing, record_view):
-            return True
-    return False
+def _duplicate(view: dict[str, Any], history: list[dict[str, Any]], accepted: list[dict[str, Any]]) -> bool:
+    return any(same_record(existing, view) for existing in list(history) + accepted)
 
 
 def source_products(
@@ -432,55 +551,63 @@ def source_products(
     history: list[dict[str, Any]],
     needed: int = 2,
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    """Search the niche's queries in order until ``needed`` distinct products
-    qualify. Returns (sources, notes). ``notes`` records skipped candidates for
-    the email report / debugging."""
+    """Search the niche's queries until ``needed`` distinct products qualify.
+    Returns (sources, notes); ``notes`` records skipped candidates for the report."""
     queries = NICHE_QUERIES.get(niche)
     if not queries:
         raise AliError(f"No search queries configured for niche: {niche}")
+    in_fixture = _load_fixture() is not None
     accepted: list[dict[str, Any]] = []
     accepted_views: list[dict[str, Any]] = []
     accepted_ids: set[str] = set()
     notes: list[str] = []
+
+    def enough() -> bool:
+        return len(accepted) >= needed
+
     for query in queries:
-        if len(accepted) >= needed:
+        if enough():
             break
         for page in range(1, MAX_SEARCH_PAGES + 1):
-            if len(accepted) >= needed:
+            if enough():
                 break
             try:
-                products = search_products(query, page_no=page)
+                cards = discover(query, page)
             except AliError as exc:
                 notes.append(f"[{query} p{page}] {exc}")
                 break
-            if not products:
+            if not cards:
                 break
-            for product in products:
-                if len(accepted) >= needed:
+            for card in cards:
+                if enough():
                     break
-                product_id = extract_product_id(product)
+                product_id = _card_id(card)
                 if not product_id or product_id in accepted_ids:
                     continue
-                reason = gate_reason(product)
-                if reason is not None:
-                    continue
-                view = {
-                    "aliexpress_url": detail_url(product, product_id),
-                    "functional_fingerprint": normalized_identity(extract_title(product)),
-                    "product_title": extract_title(product),
-                }
-                if _duplicate(view, history, accepted_views):
-                    continue
                 try:
-                    source = product_to_source(product, niche, run_stamp, local_date)
+                    detail = card if _card_is_detail(card) else get_product_detail(product_id)
+                    flat = flatten_detail(detail)
+                    if not flat.get("id"):
+                        flat["id"] = product_id
+                    reason = gate_reason(flat)
+                    if reason is not None:
+                        continue
+                    view = {
+                        "aliexpress_url": detail_url(product_id),
+                        "functional_fingerprint": normalized_identity(flat["title"]),
+                        "product_title": flat["title"],
+                    }
+                    if _duplicate(view, history, accepted_views):
+                        continue
+                    source = product_to_source(flat, niche, run_stamp, local_date)
                 except AliError as exc:
                     notes.append(f"[{product_id}] {exc}")
                     continue
                 accepted.append(source)
                 accepted_views.append(view)
                 accepted_ids.add(product_id)
-            if _load_fixture() is not None:
-                break  # fixture returns a fixed set; do not paginate
-        if _load_fixture() is not None:
+            if in_fixture:
+                break
+        if in_fixture:
             break
     return accepted, notes
