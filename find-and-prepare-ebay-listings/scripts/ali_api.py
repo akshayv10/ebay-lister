@@ -482,67 +482,66 @@ def freight(product_id: str, sku_id: str, price: Decimal) -> Decimal | None:
     return min(costs) if costs else None
 
 
+_FEED_NAMES_CACHE: list[str] | None = None
+
+
+def feed_names() -> list[str]:
+    """The DS feeds available to this app (aliexpress.ds.feedname.get). Cached.
+    An ALI_DS_FEED_NAME env value overrides discovery of the list."""
+    global _FEED_NAMES_CACHE
+    if _FEED_NAMES_CACHE is not None:
+        return _FEED_NAMES_CACHE
+    override = os.environ.get("ALI_DS_FEED_NAME", "").strip()
+    if override:
+        _FEED_NAMES_CACHE = [override]
+        return _FEED_NAMES_CACHE
+    names: list[str] = []
+    try:
+        payload = _call("aliexpress.ds.feedname.get", {})
+    except AliError:
+        payload = {}
+    seen: set[str] = set()
+    stack: list[Any] = [payload]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key.lower() in {"promo_name", "feed_name", "name"} and isinstance(value, str) and value.strip():
+                    if value.strip() not in seen:
+                        seen.add(value.strip())
+                        names.append(value.strip())
+                else:
+                    stack.append(value)
+        elif isinstance(node, list):
+            stack.extend(node)
+    _FEED_NAMES_CACHE = names
+    return names
+
+
 def discover(query: str, page: int) -> list[dict[str, Any]]:
     """Return candidate detail dicts (fixture) or lean cards with product ids.
-    Raises AliError (surfaced as a note) when the API itself errors, so the real
-    AliExpress message reaches the run log instead of looking like 'no results'."""
+    DS apps cannot keyword-search (text.search is unavailable), so we page through
+    the app's product feeds; niche relevance is filtered later by the product title."""
     fixture = _load_fixture()
     if fixture is not None:
         return fixture
-    mode = DISCOVERY_MODE
-    errors: list[str] = []
-    api_error = False
-
-    if mode in {"auto", "text"}:
-        try:
-            payload = _call(
-                "aliexpress.ds.text.search",
-                {
-                    "keyWord": query,
-                    "countryCode": SHIP_TO_COUNTRY,
-                    "currency": TARGET_CURRENCY,
-                    "local": f"{TARGET_LANGUAGE.lower()}_{SHIP_TO_COUNTRY}",
-                    "pageIndex": str(page),
-                    "pageSize": str(PAGE_SIZE),
-                    "sortBy": "orders,desc",
-                },
-            )
-            ids = _candidate_ids(payload)
-            if ids:
-                return [{"__product_id__": pid} for pid in ids]
-            errors.append("text.search: 0 candidate ids in response")
-        except AliError as exc:
-            api_error = True
-            errors.append(f"text.search: {exc}")
-            if mode == "text":
-                raise
-
-    if mode in {"auto", "feed"}:
-        try:
-            payload = _call(
-                "aliexpress.ds.recommend.feed.get",
-                {
-                    "feed_name": os.environ.get("ALI_DS_FEED_NAME", "DS bestselling products"),
-                    "page_no": str(page),
-                    "page_size": str(PAGE_SIZE),
-                    "target_currency": TARGET_CURRENCY,
-                    "target_language": TARGET_LANGUAGE,
-                    "country": SHIP_TO_COUNTRY,
-                },
-            )
-            ids = _candidate_ids(payload)
-            if ids:
-                return [{"__product_id__": pid} for pid in ids]
-            errors.append("feed: 0 candidate ids in response")
-        except AliError as exc:
-            api_error = True
-            errors.append(f"feed: {exc}")
-            if mode == "feed":
-                raise
-
-    if api_error:
-        raise AliError("; ".join(errors))
-    return []
+    names = feed_names()
+    if not names:
+        raise AliError("no DS feeds available (aliexpress.ds.feedname.get returned none)")
+    # Round-robin a feed per page so successive pages explore different feeds.
+    feed_name = names[(page - 1) % len(names)]
+    payload = _call(
+        "aliexpress.ds.recommend.feed.get",
+        {
+            "feed_name": feed_name,
+            "page_no": str(page),
+            "page_size": str(PAGE_SIZE),
+            "target_currency": TARGET_CURRENCY,
+            "target_language": TARGET_LANGUAGE,
+            "country": SHIP_TO_COUNTRY,
+        },
+    )
+    return [{"__product_id__": pid} for pid in _candidate_ids(payload)]
 
 
 def _card_id(card: dict[str, Any]) -> str:
@@ -576,6 +575,15 @@ def _duplicate(view: dict[str, Any], history: list[dict[str, Any]], accepted: li
     return any(same_record(existing, view) for existing in list(history) + accepted)
 
 
+def _niche_tokens(niche: str) -> set[str]:
+    tokens: set[str] = set()
+    for phrase in NICHE_QUERIES.get(niche, []):
+        for token in re.findall(r"[a-z]+", phrase.lower()):
+            if len(token) >= 4:
+                tokens.add(token)
+    return tokens
+
+
 def source_products(
     niche: str,
     run_stamp: str,
@@ -583,63 +591,77 @@ def source_products(
     history: list[dict[str, Any]],
     needed: int = 2,
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    """Search the niche's queries until ``needed`` distinct products qualify.
-    Returns (sources, notes); ``notes`` records skipped candidates for the report."""
-    queries = NICHE_QUERIES.get(niche)
-    if not queries:
-        raise AliError(f"No search queries configured for niche: {niche}")
+    """Page through the app's DS feeds until ``needed`` distinct products qualify.
+    Feeds are not keyword-targeted, so each candidate must also match the day's niche
+    by title (unless ALI_NICHE_FILTER=0). Returns (sources, notes)."""
     in_fixture = _load_fixture() is not None
+    niche_filter = os.environ.get("ALI_NICHE_FILTER", "1").strip().lower() in {"1", "true", "yes", "on"}
+    niche_tokens = _niche_tokens(niche)
     accepted: list[dict[str, Any]] = []
     accepted_views: list[dict[str, Any]] = []
     accepted_ids: set[str] = set()
     notes: list[str] = []
+    off_niche = 0
+    filtered_gate = 0
 
     def enough() -> bool:
         return len(accepted) >= needed
 
-    for query in queries:
+    max_pages = 1 if in_fixture else max(MAX_SEARCH_PAGES, len(feed_names()) * MAX_SEARCH_PAGES)
+    consecutive_empty = 0
+    for page in range(1, max_pages + 1):
         if enough():
             break
-        for page in range(1, MAX_SEARCH_PAGES + 1):
+        try:
+            cards = discover("", page)
+        except AliError as exc:
+            notes.append(f"[p{page}] {exc}")
+            break
+        if not cards:
+            consecutive_empty += 1
+            if consecutive_empty >= 3:
+                break
+            continue
+        consecutive_empty = 0
+        for card in cards:
             if enough():
                 break
+            product_id = _card_id(card)
+            if not product_id or product_id in accepted_ids:
+                continue
             try:
-                cards = discover(query, page)
+                detail = card if _card_is_detail(card) else get_product_detail(product_id)
+                flat = flatten_detail(detail)
+                if not flat.get("id"):
+                    flat["id"] = product_id
+                if niche_filter and niche_tokens and not in_fixture:
+                    title_l = flat.get("title", "").casefold()
+                    if not any(token in title_l for token in niche_tokens):
+                        off_niche += 1
+                        continue
+                if gate_reason(flat) is not None:
+                    filtered_gate += 1
+                    continue
+                view = {
+                    "aliexpress_url": detail_url(product_id),
+                    "functional_fingerprint": normalized_identity(flat["title"]),
+                    "product_title": flat["title"],
+                }
+                if _duplicate(view, history, accepted_views):
+                    continue
+                source = product_to_source(flat, niche, run_stamp, local_date)
             except AliError as exc:
-                notes.append(f"[{query} p{page}] {exc}")
-                break
-            if not cards:
-                break
-            for card in cards:
-                if enough():
-                    break
-                product_id = _card_id(card)
-                if not product_id or product_id in accepted_ids:
-                    continue
-                try:
-                    detail = card if _card_is_detail(card) else get_product_detail(product_id)
-                    flat = flatten_detail(detail)
-                    if not flat.get("id"):
-                        flat["id"] = product_id
-                    reason = gate_reason(flat)
-                    if reason is not None:
-                        continue
-                    view = {
-                        "aliexpress_url": detail_url(product_id),
-                        "functional_fingerprint": normalized_identity(flat["title"]),
-                        "product_title": flat["title"],
-                    }
-                    if _duplicate(view, history, accepted_views):
-                        continue
-                    source = product_to_source(flat, niche, run_stamp, local_date)
-                except AliError as exc:
-                    notes.append(f"[{product_id}] {exc}")
-                    continue
-                accepted.append(source)
-                accepted_views.append(view)
-                accepted_ids.add(product_id)
-            if in_fixture:
-                break
+                notes.append(f"[{product_id}] {exc}")
+                continue
+            accepted.append(source)
+            accepted_views.append(view)
+            accepted_ids.add(product_id)
         if in_fixture:
             break
+
+    if len(accepted) < needed:
+        notes.append(
+            f"feeds={feed_names() if not in_fixture else 'fixture'} "
+            f"off_niche_skipped={off_niche} failed_gates={filtered_gate} accepted={len(accepted)}"
+        )
     return accepted, notes
