@@ -43,7 +43,9 @@ SEND_FROM_COUNTRY = os.environ.get("ALI_SEND_FROM_COUNTRY", "CN")
 TARGET_CURRENCY = os.environ.get("ALI_TARGET_CURRENCY", "USD")
 TARGET_LANGUAGE = os.environ.get("ALI_TARGET_LANGUAGE", "EN")
 DISCOVERY_MODE = os.environ.get("ALI_DS_DISCOVERY", "auto").strip().lower()  # auto|text|feed
-USE_FREIGHT = os.environ.get("ALI_USE_FREIGHT", "1").strip().lower() in {"1", "true", "yes", "on"}
+# ds.freight.calculate also requires a seller access_token, so default it off; the
+# delivered-cost estimate is used instead (the seller revises price after posting).
+USE_FREIGHT = os.environ.get("ALI_USE_FREIGHT", "0").strip().lower() in {"1", "true", "yes", "on"}
 
 # Eligibility thresholds (references/daily-sourcing.md). The DS product.get response
 # provides a real star rating and review count, so these gates are exact (unlike the
@@ -293,9 +295,10 @@ def flatten_card(card: dict[str, Any]) -> dict[str, Any]:
         card.get("target_sale_price") or card.get("target_app_sale_price")
         or card.get("sale_price") or card.get("app_sale_price"))
     rate_match = re.search(r"[\d.]+", _first_str(card.get("evaluate_rate") or card.get("positive_feedback_rate")))
-    rating = float(rate_match.group(0)) / 20.0 if rate_match else 0.0  # percent -> 5-star
-    orders = int(re.sub(r"\D", "", _first_str(
-        card.get("lastest_volume") or card.get("latest_volume") or card.get("orders"))) or 0)
+    rating = float(rate_match.group(0)) / 20.0 if rate_match else None  # percent -> 5-star; None if absent
+    orders_digits = re.sub(r"\D", "", _first_str(
+        card.get("lastest_volume") or card.get("latest_volume") or card.get("orders")))
+    orders = int(orders_digits) if orders_digits else None
     images: list[str] = []
     main = _https(_first_str(card.get("product_main_image_url") or card.get("image_url")))
     if main:
@@ -364,13 +367,16 @@ def gate_reason(flat: dict[str, Any]) -> str | None:
         return "excluded brand"
     if restricted(title):
         return "restricted category"
-    if flat.get("rating", 0.0) < MIN_RATING:
+    # rating/reviews/orders are enforced only when the source provides them (feed cards
+    # may omit some; the feeds are curated topsellers/bestsellers, so absence is OK).
+    rating = flat.get("rating")
+    if rating is not None and rating < MIN_RATING:
         return f"rating < {MIN_RATING}"
-    # Feed cards do not carry a review count (reviews is None); orders is the proxy.
     reviews = flat.get("reviews")
     if reviews is not None and reviews < MIN_REVIEWS:
         return f"reviews < {MIN_REVIEWS}"
-    if flat.get("orders", 0) < MIN_ORDERS:
+    orders = flat.get("orders")
+    if orders is not None and orders < MIN_ORDERS:
         return f"orders < {MIN_ORDERS}"
     price = flat.get("price")
     if price is None or price < MIN_PRICE_USD:
@@ -478,7 +484,7 @@ def _call(method: str, business_params: dict[str, str]) -> dict[str, Any]:
     if os.environ.get("ALI_DEBUG", "").strip():
         # Response bodies from these product APIs contain no secrets (the app key/secret
         # are only in the request). Print a snippet so we can see the real structure.
-        snippet = json.dumps(data)[:1500] if isinstance(data, (dict, list)) else str(data)[:1500]
+        snippet = json.dumps(data)[:4000] if isinstance(data, (dict, list)) else str(data)[:4000]
         print(f"[ALI_DEBUG] {method} -> {snippet}", flush=True)
     # AliExpress reports API-level failures as HTTP 200 with an error_response body.
     if isinstance(data, dict) and "error_response" in data:
@@ -676,10 +682,8 @@ def source_products(
     accepted_views: list[dict[str, Any]] = []
     accepted_ids: set[str] = set()
     notes: list[str] = []
-    price_skipped = 0
     failed_gates = 0
-    detail_calls = 0
-    budget = int(os.environ.get("ALI_DETAIL_BUDGET", "40"))
+    seen = 0
 
     def enough() -> bool:
         return len(accepted) >= needed
@@ -688,7 +692,7 @@ def source_products(
     max_pages = 1 if in_fixture else min(24, len(feeds) * 4)
     consecutive_empty = 0
     for page in range(1, max_pages + 1):
-        if enough() or (not in_fixture and detail_calls >= budget):
+        if enough():
             break
         try:
             cards = discover(niche, page)
@@ -702,28 +706,12 @@ def source_products(
             continue
         consecutive_empty = 0
         for card in cards:
-            if enough() or (not in_fixture and detail_calls >= budget):
+            if enough():
                 break
+            seen += 1
             try:
-                if in_fixture:
-                    flat = flatten_detail(card)
-                else:
-                    feed_price = _decimal(card.get("target_sale_price") or card.get("target_app_sale_price"))
-                    if feed_price is None or feed_price < MIN_PRICE_USD:
-                        price_skipped += 1
-                        continue
-                    pid_match = re.search(r"\d{8,20}", _first_str(card.get("product_id")))
-                    if not pid_match or pid_match.group(0) in accepted_ids:
-                        continue
-                    detail = get_product_detail(pid_match.group(0))
-                    detail_calls += 1
-                    flat = flatten_detail(detail)
-                    if not flat.get("id"):
-                        flat["id"] = pid_match.group(0)
-                    if not flat.get("images"):
-                        flat["images"] = flatten_card(card).get("images", [])
-                    if flat.get("price") is None:
-                        flat["price"] = feed_price
+                # Gate on the feed's own fields (no product.get: it needs a seller token).
+                flat = flatten_card(card)
                 product_id = flat.get("id", "")
                 if not product_id or product_id in accepted_ids:
                     continue
@@ -750,7 +738,6 @@ def source_products(
     if len(accepted) < needed:
         notes.append(
             f"niche='{niche}' feeds={feeds if not in_fixture else 'fixture'} "
-            f"price_skipped={price_skipped} detail_calls={detail_calls} "
-            f"failed_gates={failed_gates} accepted={len(accepted)}"
+            f"seen={seen} failed_gates={failed_gates} accepted={len(accepted)}"
         )
     return accepted, notes
