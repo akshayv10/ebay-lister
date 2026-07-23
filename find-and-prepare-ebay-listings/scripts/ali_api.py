@@ -84,6 +84,32 @@ NICHE_QUERIES: dict[str, list[str]] = {
     ],
 }
 
+# Niche -> DS feed names (from aliexpress.ds.feedname.get) to source from. Prefer
+# US and price-banded feeds. Names must match feedname.get exactly (spaces included).
+NICHE_FEEDS: dict[str, list[str]] = {
+    "Smartphone Accessories": [
+        "AEB_ PhoneAccessories_EG", "phones&accessories_ZA topsellers_ 20240423",
+        "AEB_ ComputerAccessories_EG",
+    ],
+    "Hobbyist & Interactive Toys": [
+        "DS_SHOPLAZZA_Toys&Hobbies_$20+_20241115", "US_Dolls&Accessories",
+        "toys_ZA topsellers_ 20240423",
+    ],
+    "Home Improvements & Lighting": [
+        "AEB_US_Lighting_TopSellers", "AEB_US_Home&Garden_TopSellers",
+        "DS_Home&Kitchen_bestsellers", "light_ZA topsellers_ 20240423",
+    ],
+    "Automotive Parts & Accessories": [
+        "DS_Automotive&Motorcycle 10$+", "AEB_Automobile&Accessories_bestsellers",
+        "car&accessories_ZA topsellers_ 20240423",
+    ],
+    "Beauty & Self Care": [
+        "USA_beauty&health_topsellers", "DS_Beauty_bestsellers",
+    ],
+}
+# General fallback feeds if a niche's feeds return nothing usable.
+FALLBACK_FEEDS = ["AEB_Droplo_BestsellersItems_20241016", "AEB_i69_FullCategory_TopSellers_20241225"]
+
 # Established global brands to reject (illustrative, per daily-sourcing.md).
 BRAND_EXCLUSIONS = {
     "apple", "iphone", "ipad", "airpods", "samsung", "galaxy", "lenovo", "sony",
@@ -291,17 +317,17 @@ def flatten_card(card: dict[str, Any]) -> dict[str, Any]:
 
 
 def _feed_products(payload: Any) -> list[dict[str, Any]]:
-    """Extract the product objects from a recommend.feed.get response."""
+    """Extract product objects from a recommend.feed.get response. The list is under
+    result.products.<something> (e.g. traffic_product_d_t_o), so take the first list
+    value found inside any 'products' object."""
     stack: list[Any] = [payload]
     while stack:
         node = stack.pop()
         if isinstance(node, dict):
-            if "products" in node:
-                products = node["products"]
-                if isinstance(products, dict):
-                    products = products.get("product") or products.get("products") or []
-                if isinstance(products, list):
-                    return [p for p in products if isinstance(p, dict)]
+            if isinstance(node.get("products"), dict):
+                for value in node["products"].values():
+                    if isinstance(value, list):
+                        return [p for p in value if isinstance(p, dict)]
             stack.extend(node.values())
         elif isinstance(node, list):
             stack.extend(node)
@@ -573,23 +599,28 @@ def feed_names() -> list[str]:
     return names
 
 
-def discover(query: str, page: int) -> list[dict[str, Any]]:
-    """Return candidate detail dicts (fixture) or lean cards with product ids.
-    DS apps cannot keyword-search (text.search is unavailable), so we page through
-    the app's product feeds; niche relevance is filtered later by the product title."""
+def niche_feeds(niche: str) -> list[str]:
+    """Feeds to source this niche from, restricted to feeds the app actually has."""
+    available = set(feed_names())
+    chosen = [f for f in NICHE_FEEDS.get(niche, []) if not available or f in available]
+    if not chosen:
+        chosen = [f for f in FALLBACK_FEEDS if not available or f in available]
+    return chosen or NICHE_FEEDS.get(niche, []) or FALLBACK_FEEDS
+
+
+def discover(niche: str, page: int) -> list[dict[str, Any]]:
+    """Return feed product objects for this niche's feeds (or fixture detail dicts).
+    DS apps cannot keyword-search, so we page through niche-matched product feeds."""
     fixture = _load_fixture()
     if fixture is not None:
         return fixture
-    names = feed_names()
-    if not names:
-        raise AliError("no DS feeds available (aliexpress.ds.feedname.get returned none)")
-    # Round-robin a feed per page so successive pages explore different feeds.
-    feed_name = names[(page - 1) % len(names)]
+    feeds = niche_feeds(niche)
+    feed_name = feeds[(page - 1) % len(feeds)]
     payload = _call(
         "aliexpress.ds.recommend.feed.get",
         {
             "feed_name": feed_name,
-            "page_no": str(page),
+            "page_no": str(((page - 1) // len(feeds)) + 1),
             "page_size": str(PAGE_SIZE),
             "target_currency": TARGET_CURRENCY,
             "target_language": TARGET_LANGUAGE,
@@ -630,15 +661,6 @@ def _duplicate(view: dict[str, Any], history: list[dict[str, Any]], accepted: li
     return any(same_record(existing, view) for existing in list(history) + accepted)
 
 
-def _niche_tokens(niche: str) -> set[str]:
-    tokens: set[str] = set()
-    for phrase in NICHE_QUERIES.get(niche, []):
-        for token in re.findall(r"[a-z]+", phrase.lower()):
-            if len(token) >= 4:
-                tokens.add(token)
-    return tokens
-
-
 def source_products(
     niche: str,
     run_stamp: str,
@@ -646,29 +668,30 @@ def source_products(
     history: list[dict[str, Any]],
     needed: int = 2,
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    """Page through the app's DS feeds until ``needed`` distinct products qualify.
-    Feeds are not keyword-targeted, so each candidate must also match the day's niche
-    by title (unless ALI_NICHE_FILTER=0). Returns (sources, notes)."""
+    """Page through this niche's DS feeds; prefilter candidates by the feed's price,
+    then fetch product detail (rating/reviews/orders) only for survivors, until
+    ``needed`` distinct products qualify. Returns (sources, notes)."""
     in_fixture = _load_fixture() is not None
-    niche_filter = os.environ.get("ALI_NICHE_FILTER", "1").strip().lower() in {"1", "true", "yes", "on"}
-    niche_tokens = _niche_tokens(niche)
     accepted: list[dict[str, Any]] = []
     accepted_views: list[dict[str, Any]] = []
     accepted_ids: set[str] = set()
     notes: list[str] = []
-    off_niche = 0
-    filtered_gate = 0
+    price_skipped = 0
+    failed_gates = 0
+    detail_calls = 0
+    budget = int(os.environ.get("ALI_DETAIL_BUDGET", "40"))
 
     def enough() -> bool:
         return len(accepted) >= needed
 
-    max_pages = 1 if in_fixture else min(15, max(MAX_SEARCH_PAGES, len(feed_names()) * 2))
+    feeds = ["fixture"] if in_fixture else niche_feeds(niche)
+    max_pages = 1 if in_fixture else min(24, len(feeds) * 4)
     consecutive_empty = 0
     for page in range(1, max_pages + 1):
-        if enough():
+        if enough() or (not in_fixture and detail_calls >= budget):
             break
         try:
-            cards = discover("", page)
+            cards = discover(niche, page)
         except AliError as exc:
             notes.append(f"[p{page}] {exc}")
             break
@@ -679,21 +702,33 @@ def source_products(
             continue
         consecutive_empty = 0
         for card in cards:
-            if enough():
+            if enough() or (not in_fixture and detail_calls >= budget):
                 break
             try:
-                # flatten_card parses the feed object directly (no per-product network call)
-                flat = flatten_card(card)
+                if in_fixture:
+                    flat = flatten_detail(card)
+                else:
+                    feed_price = _decimal(card.get("target_sale_price") or card.get("target_app_sale_price"))
+                    if feed_price is None or feed_price < MIN_PRICE_USD:
+                        price_skipped += 1
+                        continue
+                    pid_match = re.search(r"\d{8,20}", _first_str(card.get("product_id")))
+                    if not pid_match or pid_match.group(0) in accepted_ids:
+                        continue
+                    detail = get_product_detail(pid_match.group(0))
+                    detail_calls += 1
+                    flat = flatten_detail(detail)
+                    if not flat.get("id"):
+                        flat["id"] = pid_match.group(0)
+                    if not flat.get("images"):
+                        flat["images"] = flatten_card(card).get("images", [])
+                    if flat.get("price") is None:
+                        flat["price"] = feed_price
                 product_id = flat.get("id", "")
                 if not product_id or product_id in accepted_ids:
                     continue
-                if niche_filter and niche_tokens and not in_fixture:
-                    title_l = flat.get("title", "").casefold()
-                    if not any(token in title_l for token in niche_tokens):
-                        off_niche += 1
-                        continue
                 if gate_reason(flat) is not None:
-                    filtered_gate += 1
+                    failed_gates += 1
                     continue
                 view = {
                     "aliexpress_url": detail_url(product_id),
@@ -714,7 +749,8 @@ def source_products(
 
     if len(accepted) < needed:
         notes.append(
-            f"feeds={feed_names() if not in_fixture else 'fixture'} "
-            f"off_niche_skipped={off_niche} failed_gates={filtered_gate} accepted={len(accepted)}"
+            f"niche='{niche}' feeds={feeds if not in_fixture else 'fixture'} "
+            f"price_skipped={price_skipped} detail_calls={detail_calls} "
+            f"failed_gates={failed_gates} accepted={len(accepted)}"
         )
     return accepted, notes
