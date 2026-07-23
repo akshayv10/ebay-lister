@@ -391,9 +391,17 @@ def _call(method: str, business_params: dict[str, str]) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         raise AliError(f"AliExpress request failed for {method}: {exc}") from exc
     try:
-        return json.loads(raw)
+        data = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise AliError(f"AliExpress returned non-JSON for {method}: {raw[:300]}") from exc
+    # AliExpress reports API-level failures as HTTP 200 with an error_response body.
+    if isinstance(data, dict) and "error_response" in data:
+        err = data.get("error_response") or {}
+        raise AliError(
+            f"{method} error {err.get('code', '?')}: "
+            f"{err.get('msg', '')} {err.get('sub_code', '')} {err.get('sub_msg', '')}".strip()
+        )
+    return data
 
 
 def _candidate_ids(payload: Any) -> list[str]:
@@ -470,11 +478,16 @@ def freight(product_id: str, sku_id: str, price: Decimal) -> Decimal | None:
 
 
 def discover(query: str, page: int) -> list[dict[str, Any]]:
-    """Return candidate detail dicts (fixture) or lean cards with product ids."""
+    """Return candidate detail dicts (fixture) or lean cards with product ids.
+    Raises AliError (surfaced as a note) when the API itself errors, so the real
+    AliExpress message reaches the run log instead of looking like 'no results'."""
     fixture = _load_fixture()
     if fixture is not None:
         return fixture
     mode = DISCOVERY_MODE
+    errors: list[str] = []
+    api_error = False
+
     if mode in {"auto", "text"}:
         try:
             payload = _call(
@@ -492,25 +505,39 @@ def discover(query: str, page: int) -> list[dict[str, Any]]:
             ids = _candidate_ids(payload)
             if ids:
                 return [{"__product_id__": pid} for pid in ids]
-        except AliError:
+            errors.append("text.search: 0 candidate ids in response")
+        except AliError as exc:
+            api_error = True
+            errors.append(f"text.search: {exc}")
             if mode == "text":
                 raise
-    # feed fallback
-    try:
-        payload = _call(
-            "aliexpress.ds.recommend.feed.get",
-            {
-                "feed_name": os.environ.get("ALI_DS_FEED_NAME", "DS bestselling products"),
-                "page_no": str(page),
-                "page_size": str(PAGE_SIZE),
-                "target_currency": TARGET_CURRENCY,
-                "target_language": TARGET_LANGUAGE,
-                "country": SHIP_TO_COUNTRY,
-            },
-        )
-        return [{"__product_id__": pid} for pid in _candidate_ids(payload)]
-    except AliError:
-        return []
+
+    if mode in {"auto", "feed"}:
+        try:
+            payload = _call(
+                "aliexpress.ds.recommend.feed.get",
+                {
+                    "feed_name": os.environ.get("ALI_DS_FEED_NAME", "DS bestselling products"),
+                    "page_no": str(page),
+                    "page_size": str(PAGE_SIZE),
+                    "target_currency": TARGET_CURRENCY,
+                    "target_language": TARGET_LANGUAGE,
+                    "country": SHIP_TO_COUNTRY,
+                },
+            )
+            ids = _candidate_ids(payload)
+            if ids:
+                return [{"__product_id__": pid} for pid in ids]
+            errors.append("feed: 0 candidate ids in response")
+        except AliError as exc:
+            api_error = True
+            errors.append(f"feed: {exc}")
+            if mode == "feed":
+                raise
+
+    if api_error:
+        raise AliError("; ".join(errors))
+    return []
 
 
 def _card_id(card: dict[str, Any]) -> str:

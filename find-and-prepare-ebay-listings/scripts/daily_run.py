@@ -174,6 +174,8 @@ def main() -> int:
         except notify.NotifyError as exc:
             print(json.dumps({"status": "email_failed", "error": str(exc)}), file=sys.stderr)
 
+    for note in (result.get("notes") or [])[:40]:
+        print("NOTE:", note)
     print(json.dumps({"status": result.get("status"), "listed": result.get("listed_count", 0),
                       "niche": result.get("niche", ""), "error": result.get("error", "")}))
     return 0 if result.get("status") == "listed" else (0 if args.dry_run else 1)
