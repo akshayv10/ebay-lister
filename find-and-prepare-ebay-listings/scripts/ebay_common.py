@@ -29,12 +29,14 @@ KEYCHAIN_SERVICE = "find-and-prepare-ebay-listings.production"
 # environment variables mapped in ENV_SECRET_VARS below.
 DEFAULT_CONFIG_PATH = Path.home() / "Library" / "Application Support" / "find-and-prepare-ebay-listings" / "account.json"
 CONFIG_PATH = Path(os.environ["EBAY_ACCOUNT_CONFIG"]) if os.environ.get("EBAY_ACCOUNT_CONFIG") else DEFAULT_CONFIG_PATH
+# sell.metadata is intentionally omitted: many keysets are not provisioned for it as
+# a user-consent scope (eBay returns invalid_scope), and the only call that used it
+# (item-condition pre-check) is now best-effort. The Taxonomy calls use the base scope.
 SCOPES = (
     "https://api.ebay.com/oauth/api_scope",
     "https://api.ebay.com/oauth/api_scope/sell.account",
     "https://api.ebay.com/oauth/api_scope/sell.inventory",
     "https://api.ebay.com/oauth/api_scope/sell.marketing",
-    "https://api.ebay.com/oauth/api_scope/sell.metadata",
 )
 SECRET_ACCOUNTS = ("client_id", "client_secret", "runame", "refresh_token")
 # Environment-variable fallback for each Keychain-backed secret, used when running

@@ -27,7 +27,7 @@ Everything is Python 3.11 standard library — no third-party packages.
 
 ### 1. eBay
 1. Create an eBay Developer **Production** keyset and a RuName using the OAuth
-   pages already deployed at `https://ebay-oauth-pages.vercel.app`.
+   pages already deployed at `https://akshayv10.github.io/listing-oauth-pages`.
 2. On your Mac, from `find-and-prepare-ebay-listings/scripts/`:
    ```bash
    python3 ebay_setup.py authorize        # mints an ~18-month refresh token (Keychain)

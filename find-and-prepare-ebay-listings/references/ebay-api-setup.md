@@ -10,11 +10,11 @@
 
 ## Public OAuth pages
 
-Use the dedicated Production project at `https://ebay-oauth-pages.vercel.app`:
+Use the dedicated Production project at `https://akshayv10.github.io/listing-oauth-pages`:
 
-- privacy: `https://ebay-oauth-pages.vercel.app/privacy.html`
-- accepted: `https://ebay-oauth-pages.vercel.app/accepted.html`
-- declined: `https://ebay-oauth-pages.vercel.app/declined.html`
+- privacy: `https://akshayv10.github.io/listing-oauth-pages/privacy.html`
+- accepted: `https://akshayv10.github.io/listing-oauth-pages/accepted.html`
+- declined: `https://akshayv10.github.io/listing-oauth-pages/declined.html`
 
 The accepted page runs no backend. It only copies its complete browser URL so the local helper can extract the short-lived authorization code. Do not paste that URL into chat or a shell argument.
 
