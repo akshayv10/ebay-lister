@@ -255,6 +255,59 @@ def _first_id_anywhere(payload: Any) -> str:
     return ""
 
 
+def flatten_card(card: dict[str, Any]) -> dict[str, Any]:
+    """Flatten a candidate into gate-ready fields. A DS product.get result (or fixture)
+    is delegated to flatten_detail; a recommend-feed product object is parsed directly
+    from its own fields so no per-product detail call is needed."""
+    if "ae_item_base_info_dto" in card or _find_result(card):
+        return flatten_detail(card)
+    pid_match = re.search(r"\d{8,20}", _first_str(
+        card.get("product_id") or card.get("productId") or card.get("item_id")))
+    price = _decimal(
+        card.get("target_sale_price") or card.get("target_app_sale_price")
+        or card.get("sale_price") or card.get("app_sale_price"))
+    rate_match = re.search(r"[\d.]+", _first_str(card.get("evaluate_rate") or card.get("positive_feedback_rate")))
+    rating = float(rate_match.group(0)) / 20.0 if rate_match else 0.0  # percent -> 5-star
+    orders = int(re.sub(r"\D", "", _first_str(
+        card.get("lastest_volume") or card.get("latest_volume") or card.get("orders"))) or 0)
+    images: list[str] = []
+    main = _https(_first_str(card.get("product_main_image_url") or card.get("image_url")))
+    if main:
+        images.append(main)
+    for url in _string_list(card.get("product_small_image_urls") or card.get("image_urls")):
+        images.append(_https(url))
+    seen: set[str] = set()
+    unique = [u for u in images if u.startswith("https://") and not (u in seen or seen.add(u))]
+    return {
+        "id": pid_match.group(0) if pid_match else "",
+        "title": _first_str(card.get("product_title") or card.get("title") or card.get("subject")),
+        "rating": rating,
+        "reviews": None,  # not provided by the feed
+        "orders": orders,
+        "price": price,
+        "sku_id": "",
+        "images": unique[:MAX_IMAGES],
+    }
+
+
+def _feed_products(payload: Any) -> list[dict[str, Any]]:
+    """Extract the product objects from a recommend.feed.get response."""
+    stack: list[Any] = [payload]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            if "products" in node:
+                products = node["products"]
+                if isinstance(products, dict):
+                    products = products.get("product") or products.get("products") or []
+                if isinstance(products, list):
+                    return [p for p in products if isinstance(p, dict)]
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+    return []
+
+
 # --- Eligibility gates ------------------------------------------------------------
 
 def brand_excluded(title: str) -> bool:
@@ -287,7 +340,9 @@ def gate_reason(flat: dict[str, Any]) -> str | None:
         return "restricted category"
     if flat.get("rating", 0.0) < MIN_RATING:
         return f"rating < {MIN_RATING}"
-    if flat.get("reviews", 0) < MIN_REVIEWS:
+    # Feed cards do not carry a review count (reviews is None); orders is the proxy.
+    reviews = flat.get("reviews")
+    if reviews is not None and reviews < MIN_REVIEWS:
         return f"reviews < {MIN_REVIEWS}"
     if flat.get("orders", 0) < MIN_ORDERS:
         return f"orders < {MIN_ORDERS}"
@@ -541,7 +596,7 @@ def discover(query: str, page: int) -> list[dict[str, Any]]:
             "country": SHIP_TO_COUNTRY,
         },
     )
-    return [{"__product_id__": pid} for pid in _candidate_ids(payload)]
+    return _feed_products(payload)
 
 
 def _card_id(card: dict[str, Any]) -> str:
@@ -607,7 +662,7 @@ def source_products(
     def enough() -> bool:
         return len(accepted) >= needed
 
-    max_pages = 1 if in_fixture else max(MAX_SEARCH_PAGES, len(feed_names()) * MAX_SEARCH_PAGES)
+    max_pages = 1 if in_fixture else min(15, max(MAX_SEARCH_PAGES, len(feed_names()) * 2))
     consecutive_empty = 0
     for page in range(1, max_pages + 1):
         if enough():
@@ -626,14 +681,12 @@ def source_products(
         for card in cards:
             if enough():
                 break
-            product_id = _card_id(card)
-            if not product_id or product_id in accepted_ids:
-                continue
             try:
-                detail = card if _card_is_detail(card) else get_product_detail(product_id)
-                flat = flatten_detail(detail)
-                if not flat.get("id"):
-                    flat["id"] = product_id
+                # flatten_card parses the feed object directly (no per-product network call)
+                flat = flatten_card(card)
+                product_id = flat.get("id", "")
+                if not product_id or product_id in accepted_ids:
+                    continue
                 if niche_filter and niche_tokens and not in_fixture:
                     title_l = flat.get("title", "").casefold()
                     if not any(token in title_l for token in niche_tokens):
@@ -651,7 +704,7 @@ def source_products(
                     continue
                 source = product_to_source(flat, niche, run_stamp, local_date)
             except AliError as exc:
-                notes.append(f"[{product_id}] {exc}")
+                notes.append(f"[card] {exc}")
                 continue
             accepted.append(source)
             accepted_views.append(view)
