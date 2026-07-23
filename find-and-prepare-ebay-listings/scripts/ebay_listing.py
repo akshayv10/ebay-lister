@@ -126,27 +126,11 @@ def category_and_aspects(client: EbayClient, source: dict[str, Any]) -> tuple[st
     if required_missing:
         raise EbayError(f"Missing required eBay item specifics: {', '.join(required_missing)}")
 
-    # Condition check via the Sell Metadata API needs the sell.metadata scope, which
-    # many keysets are not provisioned for (it is normally read with an app token).
-    # It is only a pre-check: we always list condition NEW, which virtually every
-    # category accepts, and if a category truly rejects NEW the offer/publish call
-    # surfaces that error anyway. So treat this validation as best-effort.
-    try:
-        condition_payload = client.request(
-            "GET", f"/sell/metadata/v1/marketplace/{MARKETPLACE}/get_item_condition_policies",
-            query={"filter": f"categoryIds:{{{category_id}}}"}, marketplace_header=True,
-        ).data
-    except EbayError:
-        condition_payload = None
-    if isinstance(condition_payload, dict):
-        condition_policies = condition_payload.get("itemConditionPolicies", [])
-        conditions = {
-            str(item.get("conditionEnum", ""))
-            for policy in condition_policies if isinstance(policy, dict)
-            for item in policy.get("itemConditions", []) if isinstance(item, dict)
-        }
-        if conditions and source["condition"] not in conditions:
-            raise EbayError(f"Condition {source['condition']} is not supported in category {category_id}")
+    # No item-condition pre-check: the Sell Metadata getItemConditionPolicies response
+    # exposes conditionId/conditionDescription (not conditionEnum), so comparing it to the
+    # Inventory condition enum "NEW" never matched and wrongly rejected every category.
+    # eBay validates the condition at inventory-PUT/publish time, and list_resilient skips
+    # any product that genuinely fails — so the pre-check is unnecessary.
     return category_id, normalized, required_missing
 
 

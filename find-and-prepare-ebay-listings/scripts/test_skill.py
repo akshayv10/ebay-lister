@@ -268,13 +268,11 @@ class FakeTaxonomyClient:
                 {"localizedAspectName": "Type", "aspectConstraint": {"aspectRequired": True, "aspectMode": "SELECTION_ONLY"},
                  "aspectValues": [{"localizedValue": "Car Charger"}]},
             ]}, path)
-        if "get_item_condition_policies" in path:
-            return Response(200, {}, {"itemConditionPolicies": [{"itemConditions": [{"conditionEnum": "NEW"}]}]}, path)
         raise AssertionError(path)
 
 
 class TaxonomyTests(unittest.TestCase):
-    def test_category_required_aspects_and_condition_are_validated(self):
+    def test_category_and_required_aspects_are_validated(self):
         normalized = normalize_source(source())
         category, aspects, missing = category_and_aspects(FakeTaxonomyClient(), normalized)
         self.assertEqual(category, "123")
