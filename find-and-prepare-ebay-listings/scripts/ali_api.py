@@ -129,6 +129,15 @@ RESTRICTED_TERMS = {
     "slimming", "pesticide", "taser", "pepper spray", "knife", "firearm", "ammo",
 }
 
+# Reject standalone electronic devices (as opposed to accessories) — they land in
+# restricted eBay categories (e.g. Cell Phones 9355 rejecting condition NEW) and carry
+# brand/authenticity risk. Substring match on the title.
+DEVICE_EXCLUSIONS = {
+    "smartphone", "cell phone", "cellphone", " gsm ", "rugged phone", "feature phone",
+    "android phone", "mobile phone", "smart watch", "smartwatch", "tablet pc",
+    "laptop computer", "game console", "drone with camera",
+}
+
 
 class AliError(RuntimeError):
     pass
@@ -352,8 +361,8 @@ def brand_excluded(title: str) -> bool:
 
 
 def restricted(title: str) -> bool:
-    lowered = title.casefold()
-    return any(term in lowered for term in RESTRICTED_TERMS)
+    lowered = f" {title.casefold()} "
+    return any(term in lowered for term in RESTRICTED_TERMS | DEVICE_EXCLUSIONS)
 
 
 def gate_reason(flat: dict[str, Any]) -> str | None:

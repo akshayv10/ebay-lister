@@ -668,6 +668,79 @@ def reconcile(run_dir: Path, client: EbayClient) -> dict[str, Any]:
     return {"status": "reconciled_read_only", "run_id": run.get("run_id"), "offers": observations}
 
 
+def list_one(client: EbayClient, config: dict[str, Any], source_path: Path) -> dict[str, Any]:
+    """Prepare, publish, and 10%-promote a single product. Returns the live product
+    dict, or raises. If promotion fails after publish, the offer is withdrawn so we
+    never leave an unpromoted live listing."""
+    result_path = source_path.with_name("result.json")
+    initialize_result(source_path, result_path)
+    result = read_json(result_path)
+    result["status"] = "payload_validated"
+    write_json(result_path, result)
+    product = prepare_product(client, config, result_path)
+    live = publish_product(client, product)
+    try:
+        ad_id = promote(client, str(config["campaign_id"]), live["listing_id"])
+    except EbayError:
+        try:
+            group = product["api"].get("inventory_item_group")
+            if group:
+                client.request(
+                    "POST", "/sell/inventory/v1/offer/withdraw_by_inventory_item_group",
+                    json_body={"inventoryItemGroupKey": group["inventory_item_group_key"], "marketplaceId": MARKETPLACE},
+                )
+            else:
+                for offer in product["api"]["offers"]:
+                    client.request("POST", f"/sell/inventory/v1/offer/{offer['offer_id']}/withdraw")
+        except EbayError:
+            pass
+        raise
+    product["status"] = "live"
+    product["published"] = True
+    product["publish_allowed"] = False
+    product["listing_id"] = live["listing_id"]
+    product["ebay_url"] = live["ebay_url"]
+    product["general_promotion"] = {"campaign_id": config["campaign_id"], "ad_id": ad_id, "bid_percentage": "10.0"}
+    product["priority_promotion_enabled"] = False
+    write_json(result_path, product)
+    return product
+
+
+def list_resilient(run_dir: Path, client: EbayClient, needed: int = 2, history_path: Path = HISTORY_PATH) -> dict[str, Any]:
+    """List products from run_dir independently, skipping any that fail, until ``needed``
+    are live. One bad candidate never blocks the others. Writes run-result.json."""
+    config = require_setup(client)
+    sources = sorted(run_dir.glob("*/source.json"))
+    if not sources:
+        raise EbayError("Run directory contains no source.json files")
+    listed: list[dict[str, Any]] = []
+    errors: list[str] = []
+    for source_path in sources:
+        if len(listed) >= needed:
+            break
+        try:
+            listed.append(list_one(client, config, source_path))
+        except EbayError as exc:
+            errors.append(f"{source_path.parent.name}: {exc}")
+    if listed:
+        try:
+            write_history_batch(
+                history_path,
+                [history_record(p, {"listing_id": p["listing_id"], "ebay_url": p["ebay_url"]}) for p in listed],
+            )
+        except (OSError, ValueError) as exc:
+            errors.append(f"history: {exc}")
+    run = {
+        "status": "live" if len(listed) >= needed else ("partial" if listed else "error"),
+        "run_id": run_dir.name,
+        "listed_count": len(listed),
+        "products": listed,
+        "errors": errors,
+    }
+    write_json(run_dir / "run-result.json", run)
+    return run
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)

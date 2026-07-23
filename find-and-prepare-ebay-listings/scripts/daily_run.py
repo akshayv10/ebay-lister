@@ -78,6 +78,21 @@ def attach_live_urls(summaries: list[dict[str, Any]], run_result: dict[str, Any]
     return listed
 
 
+def listed_summaries(products: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for product in products:
+        variant = (product.get("selected_variants") or [{}])[0]
+        out.append({
+            "product_id": product.get("product_id"),
+            "title": product.get("listing_title"),
+            "aliexpress_url": product.get("aliexpress_url"),
+            "price": variant.get("visible_item_price", ""),
+            "ebay_url": product.get("ebay_url", ""),
+            "listing_id": product.get("listing_id", ""),
+        })
+    return out
+
+
 def run(dry_run: bool) -> dict[str, Any]:
     now = _now()
     local_date = now.date().isoformat()
@@ -85,65 +100,57 @@ def run(dry_run: bool) -> dict[str, Any]:
     history = load_history(HISTORY_PATH)
     niche = choose_niche(history, now.date())
     run_dir = RUNS_DIR / run_stamp
+    pool = int(os.environ.get("ALI_SOURCE_POOL", "6"))
 
     result: dict[str, Any] = {
         "date": local_date, "niche": niche, "run_stamp": run_stamp,
         "status": "error", "products": [], "listed_count": 0, "notes": [],
     }
 
-    sources, notes = ali_api.source_products(niche, run_stamp, local_date, history, needed=2)
-    result["notes"] = notes
-    result["products"] = product_summaries(sources)
+    # Over-source a small pool so one bad candidate doesn't sink the day.
+    sources, notes = ali_api.source_products(niche, run_stamp, local_date, history, needed=pool)
+    result["notes"] = list(notes)
 
-    if len(sources) < 2:
-        result["status"] = "partial" if sources else "error"
-        result["error"] = f"Sourced only {len(sources)} of 2 qualifying products for niche '{niche}'."
-        for summary in result["products"]:
-            summary["reason"] = "second product not found; nothing listed"
+    if not sources:
+        result["error"] = f"Sourced 0 qualifying products for niche '{niche}'."
         return result
 
-    source_paths = write_sources(run_dir, sources)
+    write_sources(run_dir, sources)
     result["run_dir"] = str(run_dir)
 
     if dry_run:
         result["status"] = "partial"
-        result["error"] = "DRY RUN — sources written and validated; eBay listing skipped."
+        result["error"] = f"DRY RUN — {len(sources)} candidate(s) sourced and validated; eBay listing skipped."
+        result["products"] = product_summaries(sources[:2])
         for summary in result["products"]:
             summary["reason"] = "dry run"
         return result
 
     # Unattended: fill any category-required item specifics we did not source.
     os.environ.setdefault("EBAY_AUTOFILL_REQUIRED_ASPECTS", "1")
-    # Imported here so --dry-run never touches eBay credentials/imports.
-    from ebay_listing import prepare, publish
+    from ebay_listing import list_resilient  # imported here so --dry-run never needs eBay creds
     from ebay_common import EbayClient
 
     client = EbayClient()
     try:
-        prepared = prepare(run_dir, client)
-        run_id = str(prepared.get("run_id", ""))
-        publish(run_dir, run_id, client, HISTORY_PATH)
+        run_result = list_resilient(run_dir, client, needed=2, history_path=HISTORY_PATH)
     except (EbayError, OSError, ValueError) as exc:
         result["status"] = "error"
         result["error"] = str(exc)
-        # Surface any per-product blocked reason written by prepare().
-        for index, summary in enumerate(result["products"], 1):
-            blocked = run_dir / f"product-{index}" / "result.json"
-            if blocked.exists():
-                try:
-                    summary["reason"] = read_json(blocked).get("blocked_reason", "listing failed")
-                except (EbayError, OSError, ValueError):
-                    summary["reason"] = "listing failed"
-            else:
-                summary["reason"] = "listing failed"
         return result
 
-    run_result = read_json(run_dir / "run-result.json")
-    listed = attach_live_urls(result["products"], run_result)
-    result["listed_count"] = listed
-    result["status"] = "listed" if listed == 2 else "error"
-    if listed != 2:
-        result["error"] = f"Publish reported {listed} of 2 live listings; check run-result.json."
+    listed = run_result.get("products", [])
+    result["products"] = listed_summaries(listed)
+    result["listed_count"] = int(run_result.get("listed_count", len(listed)))
+    result["notes"] += run_result.get("errors", [])
+    if result["listed_count"] >= 2:
+        result["status"] = "listed"
+    elif result["listed_count"] == 1:
+        result["status"] = "partial"
+        result["error"] = "Listed 1 of 2; the other candidate(s) failed — see notes."
+    else:
+        result["status"] = "error"
+        result["error"] = "Listed 0 of 2; all candidates failed — see notes."
     return result
 
 
