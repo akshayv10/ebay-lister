@@ -394,6 +394,11 @@ def _call(method: str, business_params: dict[str, str]) -> dict[str, Any]:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise AliError(f"AliExpress returned non-JSON for {method}: {raw[:300]}") from exc
+    if os.environ.get("ALI_DEBUG", "").strip():
+        # Response bodies from these product APIs contain no secrets (the app key/secret
+        # are only in the request). Print a snippet so we can see the real structure.
+        snippet = json.dumps(data)[:1500] if isinstance(data, (dict, list)) else str(data)[:1500]
+        print(f"[ALI_DEBUG] {method} -> {snippet}", flush=True)
     # AliExpress reports API-level failures as HTTP 200 with an error_response body.
     if isinstance(data, dict) and "error_response" in data:
         err = data.get("error_response") or {}

@@ -29,6 +29,7 @@ jobs:
       HISTORY_PATH: state/resale-product-history.jsonl
       RUNS_DIR: ebay-listing-runs
       RUN_TZ: ${{ vars.RUN_TZ || 'Asia/Kolkata' }}
+      ALI_DEBUG: ${{ vars.ALI_DEBUG || '1' }}
       # --- eBay secrets ---
       EBAY_CLIENT_ID: ${{ secrets.EBAY_CLIENT_ID }}
       EBAY_CLIENT_SECRET: ${{ secrets.EBAY_CLIENT_SECRET }}
