@@ -207,8 +207,9 @@ def record_prepared(result_path: Path, api_record: dict[str, Any]) -> dict[str, 
         raise JobError("At least one EPS image URL is required")
     if not api_record.get("category_id") or api_record.get("required_aspects_complete") is not True:
         raise JobError("Category and required-aspect validation must pass")
-    if not isinstance(api_record.get("listing_fees"), (dict, list)):
-        raise JobError("Listing fee response is required before review")
+    # Listing fees are informational; an empty response must not block a valid listing.
+    if api_record.get("listing_fees") is not None and not isinstance(api_record.get("listing_fees"), (dict, list)):
+        raise JobError("Listing fee response must be an object or list when present")
     result["status"] = "api_prepared"
     result["api"] = api_record
     result["published"] = False

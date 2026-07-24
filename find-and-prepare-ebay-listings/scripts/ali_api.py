@@ -443,7 +443,10 @@ def product_to_source(flat: dict[str, Any], niche: str, run_stamp: str, local_da
         # are auto-filled downstream (EBAY_AUTOFILL_REQUIRED_ASPECTS), so we send only
         # the verified Brand to avoid selection-only aspect conflicts.
         "category_query": ebay_title,
-        "aspects": {"Brand": ["Unbranded"]},
+        # eBay's BrandMPN rule requires an MPN whenever Brand is supplied; "Does Not
+        # Apply" is the accepted value for unbranded goods. MPN is free text, so it
+        # cannot trip the selection-only aspect validation.
+        "aspects": {"Brand": ["Unbranded"], "MPN": ["Does Not Apply"]},
         "source_images": flat["images"],
         "selected_variants": [
             {

@@ -248,6 +248,9 @@ def prepare_product(client: EbayClient, config: dict[str, Any], result_path: Pat
                 "description": source["listing_description"],
                 "aspects": aspects,
                 "brand": source["verified_brand"],
+                # eBay's BrandMPN validation wants an MPN alongside Brand; send it as a
+                # first-class field as well as an aspect.
+                "mpn": (aspects.get("MPN") or ["Does Not Apply"])[0],
                 "imageUrls": eps_urls,
             },
         }
@@ -306,10 +309,14 @@ def prepare_product(client: EbayClient, config: dict[str, Any], result_path: Pat
         offer_id, readback = create_or_reuse_offer(client, offer_payload)
         offer_records.append({"sku": variant["sku"], "offer_id": offer_id, "published": False, "readback": readback})
 
-    fees = client.request(
-        "POST", "/sell/inventory/v1/offer/get_listing_fees",
-        json_body={"offers": [{"offerId": item["offer_id"]} for item in offer_records]},
-    ).data
+    # Listing fees are informational only — never let a fee lookup block a valid listing.
+    try:
+        fees = client.request(
+            "POST", "/sell/inventory/v1/offer/get_listing_fees",
+            json_body={"offers": [{"offerId": item["offer_id"]} for item in offer_records]},
+        ).data
+    except EbayError:
+        fees = {}
     api_record = {
         "environment": "production",
         "marketplace_id": MARKETPLACE,
