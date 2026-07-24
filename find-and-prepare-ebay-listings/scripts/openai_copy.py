@@ -197,6 +197,65 @@ def to_html(text: str) -> str:
     return "".join(blocks)
 
 
+AXIS_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["axis", "values"],
+    "properties": {
+        "axis": {"type": "string"},
+        "values": {"type": "object", "additionalProperties": {"type": "string"}},
+    },
+}
+
+
+def normalize_variant_axis(
+    axis: str,
+    values: list[str],
+    product_title: str = "",
+    transport: Any | None = None,
+) -> dict[str, Any]:
+    """Correct an AliExpress option axis for eBay.
+
+    AliExpress mislabels axes — an axis called "Color" may actually hold "2pcs/4pcs".
+    Returns {'axis': 'Bundle Quantity', 'values': {old: tidied}, 'usage': (in, out), 'model'}.
+    """
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key and transport is None:
+        raise CopyError("OPENAI_API_KEY is not set")
+    model = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini").strip() or "gpt-4.1-mini"
+    prompt = (
+        "An AliExpress product option axis is often mislabelled. Choose the correct eBay "
+        "variation name for it and tidy each option value.\n"
+        "- Pick ONE axis name from: Color, Size, Style, Type, Material, Bundle Quantity, Model.\n"
+        "  Example: an axis called 'Color' whose values are '2pcs'/'4pcs' is 'Bundle Quantity'.\n"
+        "- Keep values short and human (Title Case), max 60 chars, and keep them distinct.\n"
+        "- Return every original value as a key mapping to its tidied value.\n\n"
+        f"Product: {product_title}\nCurrent axis name: {axis}\n"
+        f"Values: {json.dumps(values, ensure_ascii=False)}"
+    )
+    body = {
+        "model": model,
+        "input": [
+            {"role": "system", "content": "You normalise ecommerce variation data as strict JSON."},
+            {"role": "user", "content": [{"type": "input_text", "text": prompt}]},
+        ],
+        "text": {"format": {"type": "json_schema", "name": "variant_axis", "strict": False, "schema": AXIS_SCHEMA}},
+    }
+    payload = _post(body, transport)
+    try:
+        parsed = json.loads(_extract_text(payload))
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise CopyError(f"OpenAI returned unparseable axis: {exc}") from exc
+    new_axis = str(parsed.get("axis", "")).strip() or axis
+    raw_values = parsed.get("values", {})
+    mapped = {
+        str(k): str(v).strip()[:60]
+        for k, v in (raw_values.items() if isinstance(raw_values, dict) else [])
+        if str(v).strip()
+    }
+    return {"axis": new_axis, "values": mapped, "usage": _usage(payload), "model": model}
+
+
 def _usage(payload: dict[str, Any]) -> tuple[int, int]:
     usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
     return int(usage.get("input_tokens", 0) or 0), int(usage.get("output_tokens", 0) or 0)

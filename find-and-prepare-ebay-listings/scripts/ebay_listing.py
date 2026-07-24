@@ -88,6 +88,49 @@ def enrich_source_with_ai(source_path: Path) -> bool:
     return True
 
 
+def enrich_source_with_variants(source_path: Path) -> bool:
+    """Best-effort: turn a single-variant source into a real multi-variation listing.
+
+    Needs ALIEXPRESS_ACCESS_TOKEN (ds.product.get). Without it — or when the product has no
+    usable option axis — the source is left as a single variation. Returns True if variants
+    were applied."""
+    import ali_api
+
+    source = read_json(source_path)
+    try:
+        axis, records = ali_api.variant_records(source["product_id"])
+    except Exception:  # noqa: BLE001 - no token / API error / odd payload
+        return False
+    if not axis or len(records) < 2:
+        return False
+
+    # AliExpress mislabels axes ("Color" holding "2pcs/4pcs"); let the model correct it.
+    try:
+        import openai_copy
+        import spend
+
+        fixed = openai_copy.normalize_variant_axis(
+            axis, [r["options"][axis] for r in records], source.get("source_title", "")
+        )
+        tokens_in, tokens_out = fixed.get("usage", (0, 0))
+        spend.record(fixed.get("model", ""), tokens_in, tokens_out, purpose="variant_axis")
+        new_axis = fixed.get("axis") or axis
+        value_map = fixed.get("values") or {}
+        for record in records:
+            old = record["options"].pop(axis)
+            record["options"][new_axis] = str(value_map.get(old, old))[:60] or old
+    except Exception:  # noqa: BLE001 - keep the raw label
+        pass
+
+    # Multi-variation groups cap at 12 shared images.
+    images = source.get("source_images") or []
+    if len(images) > 12:
+        source["source_images"] = images[:12]
+    source["selected_variants"] = records
+    write_json(source_path, source)
+    return True
+
+
 def require_setup(client: EbayClient) -> dict[str, Any]:
     status = preflight(client)
     if status.get("status") != "ready":
@@ -308,6 +351,16 @@ def prepare_product(client: EbayClient, config: dict[str, Any], result_path: Pat
     group_key = source.get("inventory_item_group_key", "")
     for variant in source["selected_variants"]:
         aspects = {**normalized_aspects, **{name: [value] for name, value in variant["options"].items()}}
+        # Lead with this variation's own photo so eBay swaps the image with the selection;
+        # a failed import just falls back to the shared gallery.
+        variant_images = eps_urls
+        if variant.get("image"):
+            try:
+                variant_images = [eps_image(client, variant["image"])] + [
+                    url for url in eps_urls if url != variant.get("_eps")
+                ]
+            except EbayError:
+                variant_images = eps_urls
         payload: dict[str, Any] = {
             "availability": {"shipToLocationAvailability": {"quantity": 1}},
             "condition": source["condition"],
@@ -319,7 +372,7 @@ def prepare_product(client: EbayClient, config: dict[str, Any], result_path: Pat
                 # eBay's BrandMPN validation wants an MPN alongside Brand; send it as a
                 # first-class field as well as an aspect.
                 "mpn": (aspects.get("MPN") or ["N/A"])[0],
-                "imageUrls": eps_urls,
+                "imageUrls": variant_images,
             },
         }
         put_with_retry(client, f"/sell/inventory/v1/inventory_item/{urllib.parse.quote(variant['sku'])}", payload)
@@ -746,9 +799,13 @@ def list_one(client: EbayClient, config: dict[str, Any], source_path: Path) -> d
     """Prepare, publish, and 10%-promote a single product. Returns the live product
     dict, or raises. If promotion fails after publish, the offer is withdrawn so we
     never leave an unpromoted live listing."""
-    # Best-effort AI copy (title/description/specifics). Never let it block a listing.
+    # Best-effort enrichment; neither step may block a listing.
     try:
-        enrich_source_with_ai(source_path)
+        enrich_source_with_variants(source_path)  # real eBay variations when a token exists
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        enrich_source_with_ai(source_path)  # AI title/description/specifics
     except Exception:  # noqa: BLE001
         pass
     result_path = source_path.with_name("result.json")

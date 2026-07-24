@@ -152,7 +152,7 @@ def normalize_source(source: dict[str, Any]) -> dict[str, Any]:
             raise JobError("Selected variants collide after deterministic SKU normalization")
         seen_skus.add(sku)
         expected = Decimal(str(quote(float(delivered))["suggested_price"]))
-        normalized_variants.append({
+        record = {
             "id": variant_id,
             "sku": sku,
             "options": clean_options,
@@ -160,7 +160,11 @@ def normalize_source(source: dict[str, Any]) -> dict[str, Any]:
             "delivered_total": f"{delivered:.2f}",
             "expected_ebay_price": f"{expected:.2f}",
             "quantity": 1,
-        })
+        }
+        # Optional per-variation photo, so eBay swaps the image with the selection.
+        if str(item.get("image", "")).strip():
+            record["image"] = https_url(item["image"], f"{variant_id}.image")
+        normalized_variants.append(record)
     if len(normalized_variants) > 1:
         if len(normalized["source_images"]) > 12:
             raise JobError("Multi-variation listings support at most 12 group images")

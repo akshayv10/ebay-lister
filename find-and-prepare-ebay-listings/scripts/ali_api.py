@@ -45,7 +45,7 @@ TARGET_LANGUAGE = os.environ.get("ALI_TARGET_LANGUAGE", "EN")
 DISCOVERY_MODE = os.environ.get("ALI_DS_DISCOVERY", "auto").strip().lower()  # auto|text|feed
 # ds.freight.calculate also requires a seller access_token, so default it off; the
 # delivered-cost estimate is used instead (the seller revises price after posting).
-USE_FREIGHT = os.environ.get("ALI_USE_FREIGHT", "0").strip().lower() in {"1", "true", "yes", "on"}
+USE_FREIGHT = os.environ.get("ALI_USE_FREIGHT", "1").strip().lower() in {"1", "true", "yes", "on"}
 
 # Eligibility thresholds (references/daily-sourcing.md). The DS product.get response
 # provides a real star rating and review count, so these gates are exact (unlike the
@@ -305,6 +305,142 @@ def flatten_detail(detail: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# Option axes that describe logistics rather than the product itself — never used as the
+# eBay variation axis (a buyer shouldn't choose "Ships From").
+LOGISTICS_AXES = {"ships from", "ship from", "shipping", "plug", "plug type", "voltage",
+                  "warehouse", "country", "origin", "delivery"}
+MAX_VARIANTS = int(os.environ.get("ALI_MAX_VARIANTS", "4"))
+
+
+def _sku_property_names(result: dict[str, Any]) -> dict[str, str]:
+    """Map SKU property id -> human name, from whichever property DTO the response uses."""
+    names: dict[str, str] = {}
+    stack: list[Any] = [result]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            pid = _first_str(node.get("sku_property_id") or node.get("attr_name_id") or node.get("property_id"))
+            label = _first_str(node.get("sku_property_name") or node.get("attr_name") or node.get("property_name"))
+            if pid and label:
+                names.setdefault(pid, label)
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+    return names
+
+
+def parse_sku_attr(sku_attr: str, property_names: dict[str, str]) -> dict[str, str]:
+    """'14:200004889#Black;5:361385#XL' -> {'Color': 'Black', 'Size': 'XL'}.
+
+    Falls back to the property id as the axis name when the id isn't in the name map;
+    the label is corrected downstream (openai_copy.normalize_variant_axis)."""
+    options: dict[str, str] = {}
+    for part in str(sku_attr or "").split(";"):
+        part = part.strip()
+        if not part or ":" not in part:
+            continue
+        prop_id, _, rest = part.partition(":")
+        value = rest.split("#", 1)[1].strip() if "#" in rest else rest.strip()
+        if not value:
+            continue
+        axis = property_names.get(prop_id.strip(), "").strip() or f"Option {prop_id.strip()}"
+        options.setdefault(axis, value)
+    return options
+
+
+def parse_variants(detail: dict[str, Any]) -> list[dict[str, Any]]:
+    """Flatten ds.product.get SKUs into [{sku_id, options, price, image, stock}]."""
+    result = _find_result(detail)
+    property_names = _sku_property_names(result)
+    variants: list[dict[str, Any]] = []
+    for sku in _sku_list(result):
+        price = None
+        for key in ("offer_sale_price", "sku_price", "offer_price"):
+            price = _decimal(sku.get(key))
+            if price is not None:
+                break
+        if price is None:
+            continue
+        options = parse_sku_attr(_first_str(sku.get("sku_attr") or sku.get("sku_attr_name")), property_names)
+        stock_digits = re.sub(r"\D", "", _first_str(sku.get("sku_available_stock") or sku.get("ipm_sku_stock") or sku.get("sku_stock")))
+        variants.append({
+            "sku_id": _first_str(sku.get("sku_id") or sku.get("id") or sku.get("skuId")),
+            "options": options,
+            "price": price,
+            "image": _https(_first_str(sku.get("sku_image") or sku.get("sku_image_url"))),
+            "stock": int(stock_digits) if stock_digits else 0,
+        })
+    return variants
+
+
+def choose_variant_axis(variants: list[dict[str, Any]]) -> str:
+    """Pick the single most useful option axis, ignoring logistics axes."""
+    counts: dict[str, set[str]] = {}
+    for variant in variants:
+        for axis, value in variant["options"].items():
+            if axis.strip().casefold() in LOGISTICS_AXES:
+                continue
+            counts.setdefault(axis, set()).add(value)
+    usable = {axis: values for axis, values in counts.items() if len(values) >= 2}
+    if not usable:
+        return ""
+    return max(usable, key=lambda axis: len(usable[axis]))
+
+
+def select_variants(variants: list[dict[str, Any]], limit: int = MAX_VARIANTS) -> tuple[str, list[dict[str, Any]]]:
+    """Return (axis, chosen variants) — one in-stock, >= MIN_PRICE_USD variant per axis value."""
+    axis = choose_variant_axis(variants)
+    if not axis:
+        return "", []
+    best: dict[str, dict[str, Any]] = {}
+    for variant in variants:
+        value = variant["options"].get(axis, "").strip()
+        if not value or variant["price"] is None or variant["price"] < MIN_PRICE_USD:
+            continue
+        current = best.get(value)
+        # Prefer in-stock, then the cheaper option for a given axis value.
+        if current is None or (variant["stock"] > 0 and current["stock"] <= 0) or (
+            (variant["stock"] > 0) == (current["stock"] > 0) and variant["price"] < current["price"]
+        ):
+            best[value] = variant
+    chosen = sorted(best.values(), key=lambda v: (v["stock"] <= 0, v["price"]))[:limit]
+    if len(chosen) < 2:
+        return "", []
+    return axis, chosen
+
+
+def variant_records(product_id: str) -> tuple[str, list[dict[str, Any]]]:
+    """Fetch a product's SKUs and return (axis, source.json-shaped variant records).
+
+    Each record carries its own AliExpress checkout price (SKU price + per-SKU freight) and
+    its own image, so eBay shows the right price and photo per variation. Returns ("", [])
+    when there is no usable axis; raises AliError without an access token.
+    """
+    detail = get_product_detail(product_id)
+    axis, chosen = select_variants(parse_variants(detail))
+    if not axis:
+        return "", []
+    records: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for variant in chosen:
+        value = variant["options"][axis]
+        variant_id = re.sub(r"[^a-z0-9]+", "-", value.casefold()).strip("-") or variant["sku_id"]
+        while variant_id in seen_ids:  # ids must be unique within the listing
+            variant_id = f"{variant_id}-{variant['sku_id'][-4:] or len(seen_ids)}"
+        seen_ids.add(variant_id)
+        price = variant["price"]
+        shipping = freight(product_id, variant["sku_id"], price)
+        records.append({
+            "id": variant_id,
+            "options": {axis: value},
+            "visible_item_price": f"{price:.2f}",
+            "delivered_total": f"{delivered_total(price, shipping):.2f}",
+            "quantity": 1,
+            "image": variant["image"],
+        })
+    return axis, records
+
+
 def _first_id_anywhere(payload: Any) -> str:
     for pid in _candidate_ids(payload):
         return pid
@@ -561,7 +697,15 @@ def _candidate_ids(payload: Any) -> list[str]:
 
 # --- DS API methods ---------------------------------------------------------------
 
+def access_token() -> str:
+    return os.environ.get("ALIEXPRESS_ACCESS_TOKEN", "").strip()
+
+
 def get_product_detail(product_id: str) -> dict[str, Any]:
+    """Full product detail including SKUs/variants. Requires a seller access_token."""
+    token = access_token()
+    if not token:
+        raise AliError("ALIEXPRESS_ACCESS_TOKEN is not set (needed for variant data)")
     payload = _call(
         "aliexpress.ds.product.get",
         {
@@ -569,6 +713,7 @@ def get_product_detail(product_id: str) -> dict[str, Any]:
             "ship_to_country": SHIP_TO_COUNTRY,
             "target_currency": TARGET_CURRENCY,
             "target_language": TARGET_LANGUAGE,
+            "access_token": token,
         },
     )
     return _find_result(payload)
@@ -577,7 +722,10 @@ def get_product_detail(product_id: str) -> dict[str, Any]:
 def freight(product_id: str, sku_id: str, price: Decimal) -> Decimal | None:
     """Best-effort real US shipping cost. Returns None (caller uses the estimate)
     on any error, in fixture mode, or when disabled."""
-    if not USE_FREIGHT or _load_fixture() is not None or not os.environ.get("ALIEXPRESS_APP_KEY", "").strip():
+    token = access_token()
+    if not USE_FREIGHT or _load_fixture() is not None or not token:
+        return None
+    if not os.environ.get("ALIEXPRESS_APP_KEY", "").strip():
         return None
     try:
         payload = _call(
@@ -590,6 +738,7 @@ def freight(product_id: str, sku_id: str, price: Decimal) -> Decimal | None:
                 "send_goods_country_code": SEND_FROM_COUNTRY,
                 "price": f"{price:.2f}",
                 "price_currency": TARGET_CURRENCY,
+                "access_token": token,
             },
         )
     except AliError:

@@ -90,6 +90,7 @@ Push this repo (private), then add **Settings → Secrets and variables → Acti
 | `NOTIFY_FROM` | usually same as `SMTP_USER` |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | complete service-account key JSON |
 | `OPENAI_API_KEY` | OpenAI key for AI-written eBay title/description/specifics (gpt-4.1-mini) |
+| `ALIEXPRESS_ACCESS_TOKEN` | Seller token for variants (`ds.product.get`) + per-SKU freight. Mint with `mint_ali_token.py`. Optional — without it listings are single-variation. |
 
 Optional **Variables**: `RUN_TZ` (default `Asia/Kolkata`), `SMTP_HOST`, `SMTP_PORT`,
 `OPENAI_MODEL` (default `gpt-4.1-mini`). Without `OPENAI_API_KEY` the listings still
