@@ -134,6 +134,21 @@ def category_and_aspects(client: EbayClient, source: dict[str, Any]) -> tuple[st
     return category_id, normalized, required_missing
 
 
+def put_with_retry(client: EbayClient, path: str, json_body: Any, attempts: int = 3) -> None:
+    """PUT an idempotent full-replacement resource, retrying eBay's transient 5xx
+    ("Core Inventory Service internal error"). Safe to repeat: same payload, same key."""
+    delay = 1.5
+    for attempt in range(1, attempts + 1):
+        try:
+            client.request("PUT", path, json_body=json_body, expected=(204,))
+            return
+        except ApiError as exc:
+            if attempt >= attempts or exc.status < 500:
+                raise
+            time.sleep(delay)
+            delay *= 2
+
+
 def eps_image(client: EbayClient, source_url: str) -> str:
     response = client.request(
         "POST", "https://apim.ebay.com/commerce/media/v1_beta/image/create_image_from_url",
@@ -164,10 +179,16 @@ def offer_id_from_response(response: Any) -> str:
 
 
 def find_existing_offer(client: EbayClient, sku: str) -> dict[str, Any] | None:
-    response = client.request(
+    # eBay answers 404 ("This Offer is not available") when the SKU has no offer yet —
+    # that means "nothing to reuse", not a failure, so accept it and return None.
+    result = client.request(
         "GET", "/sell/inventory/v1/offer",
         query={"sku": sku, "marketplace_id": MARKETPLACE, "format": "FIXED_PRICE", "limit": 100},
-    ).data
+        expected=(200, 404),
+    )
+    if result.status == 404:
+        return None
+    response = result.data
     offers = response.get("offers", []) if isinstance(response, dict) else []
     matches = [item for item in offers if isinstance(item, dict) and str(item.get("sku", "")) == sku]
     if len(matches) > 1:
@@ -230,10 +251,7 @@ def prepare_product(client: EbayClient, config: dict[str, Any], result_path: Pat
                 "imageUrls": eps_urls,
             },
         }
-        client.request(
-            "PUT", f"/sell/inventory/v1/inventory_item/{urllib.parse.quote(variant['sku'])}",
-            json_body=payload, expected=(204,),
-        )
+        put_with_retry(client, f"/sell/inventory/v1/inventory_item/{urllib.parse.quote(variant['sku'])}", payload)
         readback = client.request(
             "GET", f"/sell/inventory/v1/inventory_item/{urllib.parse.quote(variant['sku'])}"
         ).data
@@ -258,10 +276,7 @@ def prepare_product(client: EbayClient, config: dict[str, Any], result_path: Pat
                 ],
             },
         }
-        client.request(
-            "PUT", f"/sell/inventory/v1/inventory_item_group/{urllib.parse.quote(group_key)}",
-            json_body=group_payload, expected=(204,),
-        )
+        put_with_retry(client, f"/sell/inventory/v1/inventory_item_group/{urllib.parse.quote(group_key)}", group_payload)
         group_readback = client.request(
             "GET", f"/sell/inventory/v1/inventory_item_group/{urllib.parse.quote(group_key)}"
         ).data
