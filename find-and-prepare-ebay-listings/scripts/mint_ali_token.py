@@ -27,7 +27,9 @@ import time
 import urllib.parse
 import urllib.request
 
-AUTHORIZE_URL = "https://api-sg.aliexpress.com/oauth/authorize"
+# Override with ALIEXPRESS_AUTH_URL if the regional host differs
+# (alternate: https://oauth.aliexpress.com/authorize).
+AUTHORIZE_URL = os.environ.get("ALIEXPRESS_AUTH_URL", "https://api-sg.aliexpress.com/oauth/authorize")
 TOKEN_URL = "https://api-sg.aliexpress.com/rest/auth/token/create"
 DEFAULT_CALLBACK = "https://akshayv10.github.io/listing-oauth-pages/accepted.html"
 
@@ -56,7 +58,12 @@ def main() -> int:
             {"response_type": "code", "force_auth": "true", "redirect_uri": callback, "client_id": app_key}
         )
     )
-    print("\n1) Open this URL, sign in to AliExpress and approve:\n")
+    print("\nUsing:")
+    print(f"  client_id (app key): {app_key}")
+    print(f"  redirect_uri       : {callback}")
+    print("  ^ this must EXACTLY match the Callback URL registered on your AliExpress app.")
+    print("    Override with ALIEXPRESS_CALLBACK_URL if it differs.\n")
+    print("1) Open this URL, sign in to AliExpress and approve:\n")
     print(consent)
     print("\n2) You will land on your callback page. Copy the COMPLETE URL from the")
     print("   address bar (it contains ?code=...), then paste it below.\n")
