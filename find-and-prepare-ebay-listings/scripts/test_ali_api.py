@@ -104,6 +104,97 @@ def test_history_dedup_skips_known_product() -> None:
     assert ids == {"1005006000000002"}
 
 
+def test_niche_feeds_are_scoped_to_the_niche() -> None:
+    # feed_names() has no app key here, so `available` is empty and niche_feeds returns
+    # the niche's own feeds (not a cross-niche pool) or the general fallback feeds.
+    ali_api._FEED_NAMES_CACHE = None
+    beauty = ali_api.niche_feeds("Beauty & Self Care")
+    assert beauty == ali_api.NICHE_FEEDS["Beauty & Self Care"]
+    assert ali_api.niche_feeds("Not A Niche") == ali_api.FALLBACK_FEEDS
+
+
+def _pool_item(pid: str, title: str, orders: int, rating: float = 4.7,
+               reviews: int = 50, price: float = 20.0) -> dict:
+    return {
+        "product_id": pid,
+        "source_title": title,
+        "aliexpress_url": ali_api.detail_url(pid),
+        "functional_fingerprint": ali_api.normalized_identity(title),
+        "_signals": {"orders": orders, "rating": rating, "reviews": reviews, "price": price},
+    }
+
+
+def test_bestseller_key_orders_by_sales_volume() -> None:
+    hi = _pool_item("1", "A", orders=900)
+    lo = _pool_item("2", "B", orders=100)
+    assert ali_api.bestseller_key(hi) > ali_api.bestseller_key(lo)
+    # Missing signals count as 0 and only ever act as tie-breakers.
+    blank = {"product_id": "3", "source_title": "C"}
+    assert ali_api.bestseller_key(blank) == (0.0, 0.0, 0.0, 0.0)
+    # Equal orders -> higher rating then price wins.
+    a = _pool_item("4", "D", orders=300, rating=4.9, price=30.0)
+    b = _pool_item("5", "E", orders=300, rating=4.6, price=99.0)
+    assert ali_api.bestseller_key(a) > ali_api.bestseller_key(b)
+
+
+def test_rank_pool_default_is_deterministic_and_distinct() -> None:
+    os.environ.pop("ALI_AI_RANK", None)
+    pool = [
+        _pool_item("10", "LED Strip Light Kit RGB", orders=800),
+        _pool_item("11", "LED Strip Light Kit RGB", orders=700),  # same product, distinct id
+        _pool_item("12", "Motion Sensor Night Light", orders=300),
+    ]
+    picked = ali_api.rank_pool(pool, 2, [])
+    ids = [p["product_id"] for p in picked]
+    # Highest-volume item wins; its near-duplicate is skipped for a distinct product.
+    assert ids == ["10", "12"]
+    assert all("_signals" not in p for p in picked)  # scratch keys stripped
+    assert picked[0]["appeal_score"] == 800.0
+
+
+def test_rank_pool_makes_no_ai_call_by_default() -> None:
+    import sys, types
+    os.environ.pop("ALI_AI_RANK", None)
+    boom = types.ModuleType("openai_copy")
+    def _raise(*a, **k):  # pragma: no cover - must never be called
+        raise AssertionError("AI ranker must not run when ALI_AI_RANK is unset")
+    boom.rank_candidates = _raise  # type: ignore[attr-defined]
+    saved = sys.modules.get("openai_copy")
+    sys.modules["openai_copy"] = boom
+    try:
+        picked = ali_api.rank_pool(
+            [_pool_item("20", "Car Trunk Organizer", 500),
+             _pool_item("21", "Car Cup Holder Expander", 400)], 2, [])
+        assert {p["product_id"] for p in picked} == {"20", "21"}
+    finally:
+        if saved is not None:
+            sys.modules["openai_copy"] = saved
+        else:
+            sys.modules.pop("openai_copy", None)
+
+
+def test_rank_pool_falls_back_when_ai_fails() -> None:
+    import sys, types
+    os.environ["ALI_AI_RANK"] = "1"
+    stub = types.ModuleType("openai_copy")
+    def _raise(*a, **k):
+        raise RuntimeError("no OpenAI key")
+    stub.rank_candidates = _raise  # type: ignore[attr-defined]
+    saved = sys.modules.get("openai_copy")
+    sys.modules["openai_copy"] = stub
+    try:
+        picked = ali_api.rank_pool(
+            [_pool_item("30", "Gua Sha Roller Set", 600),
+             _pool_item("31", "Facial Cleansing Brush", 400)], 2, [])
+        assert {p["product_id"] for p in picked} == {"30", "31"}
+    finally:
+        os.environ.pop("ALI_AI_RANK", None)
+        if saved is not None:
+            sys.modules["openai_copy"] = saved
+        else:
+            sys.modules.pop("openai_copy", None)
+
+
 def _run_all() -> int:
     tests = [v for n, v in sorted(globals().items()) if n.startswith("test_") and callable(v)]
     failures = 0

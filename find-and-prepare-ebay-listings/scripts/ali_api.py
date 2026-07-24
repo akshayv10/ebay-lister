@@ -112,27 +112,6 @@ NICHE_FEEDS: dict[str, list[str]] = {
 # General fallback feeds if a niche's feeds return nothing usable.
 FALLBACK_FEEDS = ["AEB_Droplo_BestsellersItems_20241016", "AEB_i69_FullCategory_TopSellers_20241225"]
 
-# Product selection is no longer driven by the niche rotation ("best product wins").
-# These consumer-goods feeds are sourced together and the pool is ranked by appeal.
-# Chosen from the app's 125 feeds, biased to giftable/gadget/toy/RC/home categories.
-CONSUMER_FEEDS: list[str] = [
-    "AEB_Droplo_BestsellersItems_20241016",
-    "AEB_i69_FullCategory_TopSellers_20241225",
-    "DS_NewArrivals",
-    "DS_SHOPLAZZA_Toys&Hobbies_$20+_20241115",
-    "DS_Home&Kitchen_bestsellers",
-    "DS_ConsumerElectronics_bestsellers",
-    "DS_Sports&Outdoors_bestsellers",
-    "AEB_SurpriseBox_TechKidsWomen_20241024",
-    "US_Dolls&Accessories",
-    "toys_ZA topsellers_ 20240423",
-    "AEB_US_Home&Garden_TopSellers",
-    "AEB_US_Lighting_TopSellers",
-    "DS_Beauty_bestsellers",
-    "AEB_Fetch_Garden&Tool&Pet&AutoParts_TopSellers_20241210",
-    "DS_Automotive&Motorcycle 10$+",
-]
-
 # Spare parts / components / repair items. Free deterministic filter that runs before any
 # AI call — these are what produced the "12pcs watercooling fittings" listing.
 COMPONENT_TERMS = {
@@ -666,14 +645,17 @@ def feed_names() -> list[str]:
 
 
 def niche_feeds(niche: str) -> list[str]:
-    """Feeds to source from. Selection is appeal-driven, not niche-driven ("best product
-    wins"), so this returns the consumer-goods feeds the app actually has. The niche
-    argument is kept only for the history label."""
+    """Feeds to source from for the day's niche. Sourcing (and therefore selection) is
+    scoped to the niche chosen by the 5-niche daily rotation (daily_history.choose_niche):
+    we page this niche's bestseller/topseller feeds and pick the top sellers within it.
+    Falls back to the general bestseller feeds only when the app exposes none of the
+    niche's feeds."""
     available = set(feed_names())
-    chosen = [f for f in CONSUMER_FEEDS if not available or f in available]
+    wanted = NICHE_FEEDS.get(niche, [])
+    chosen = [f for f in wanted if not available or f in available]
     if not chosen:
         chosen = [f for f in FALLBACK_FEEDS if not available or f in available]
-    return chosen or CONSUMER_FEEDS
+    return chosen or wanted or FALLBACK_FEEDS
 
 
 def discover(niche: str, page: int) -> list[dict[str, Any]]:
@@ -796,6 +778,14 @@ def source_products(
             except AliError as exc:
                 notes.append(f"[card] {exc}")
                 continue
+            # Raw bestseller signals for deterministic ranking (rank_pool). Kept off
+            # source.json — stripped before the record is returned.
+            source["_signals"] = {
+                "orders": flat.get("orders") or 0,
+                "rating": flat.get("rating") or 0.0,
+                "reviews": flat.get("reviews") or 0,
+                "price": float(flat["price"]) if flat.get("price") is not None else 0.0,
+            }
             accepted.append(source)
             accepted_views.append(view)
             accepted_ids.add(product_id)
@@ -812,11 +802,60 @@ def source_products(
     return selected, notes
 
 
+def bestseller_key(source: dict[str, Any]) -> tuple[float, float, float, float]:
+    """Sort key for "bestseller within the niche": highest sales volume (orders) wins,
+    with rating, review count, then price as tie-breakers only. Missing signals count as
+    0, so an item with no rating/review data can never outrank a genuine high-volume
+    seller. Use with reverse=True (all fields ranked descending)."""
+    signals = source.get("_signals") or {}
+    return (
+        float(signals.get("orders") or 0),
+        float(signals.get("rating") or 0.0),
+        float(signals.get("reviews") or 0),
+        float(signals.get("price") or 0.0),
+    )
+
+
+def _strip_internal(source: dict[str, Any]) -> dict[str, Any]:
+    """Remove ranking-only scratch keys so the returned record is a clean source.json."""
+    source.pop("_signals", None)
+    return source
+
+
+def rank_deterministic(pool: list[dict[str, Any]], needed: int, notes: list[str]) -> list[dict[str, Any]]:
+    """Pick the top ``needed`` bestsellers (by sales volume) from the gated pool, skipping
+    any candidate that is not functionally distinct from one already chosen. No AI."""
+    ordered = sorted(pool, key=bestseller_key, reverse=True)
+    picked: list[dict[str, Any]] = []
+    picked_views: list[dict[str, Any]] = []
+    for source in ordered:
+        if len(picked) >= needed:
+            break
+        view = {
+            "aliexpress_url": source.get("aliexpress_url", ""),
+            "functional_fingerprint": source.get("functional_fingerprint", ""),
+            "product_title": source.get("source_title", ""),
+        }
+        if any(same_record(existing, view) for existing in picked_views):
+            continue
+        orders = int((source.get("_signals") or {}).get("orders") or 0)
+        source["appeal_score"] = float(orders)
+        source["appeal_reason"] = f"top seller in niche ({orders} orders)"
+        notes.append(f"pick {orders} orders — {source.get('source_title','')[:60]}")
+        picked.append(source)
+        picked_views.append(view)
+    return [_strip_internal(s) for s in picked]
+
+
 def rank_pool(pool: list[dict[str, Any]], needed: int, notes: list[str]) -> list[dict[str, Any]]:
-    """Order the candidate pool by AI-scored resale appeal and keep the best ``needed``.
-    Any failure (no key, API error) falls back to the deterministic pool order."""
+    """Select the best ``needed`` products from the gated pool. Deterministic by default
+    (top bestsellers by sales volume, functionally distinct). Set ALI_AI_RANK=1 to opt
+    into AI-scored resale-appeal ranking instead; any AI failure falls back to the
+    deterministic ranker."""
     if len(pool) <= 1:
-        return pool[:needed]
+        return [_strip_internal(s) for s in pool[:needed]]
+    if not os.environ.get("ALI_AI_RANK", "").strip():
+        return rank_deterministic(pool, needed, notes)
     try:
         import openai_copy
         import spend
@@ -843,8 +882,8 @@ def rank_pool(pool: list[dict[str, Any]], needed: int, notes: list[str]) -> list
             notes.append(f"pick {entry['score']:.0f}/10 — {source.get('source_title','')[:60]} — {entry['reason'][:80]}")
             ordered.append(source)
         if ordered:
-            return ordered[:needed]
-        notes.append("ranker returned no usable picks; using deterministic order")
-    except Exception as exc:  # noqa: BLE001 - ranking is best-effort
-        notes.append(f"ranking unavailable ({exc}); using deterministic order")
-    return pool[:needed]
+            return [_strip_internal(s) for s in ordered[:needed]]
+        notes.append("AI ranker returned no usable picks; using deterministic order")
+    except Exception as exc:  # noqa: BLE001 - AI ranking is best-effort
+        notes.append(f"AI ranking unavailable ({exc}); using deterministic order")
+    return rank_deterministic(pool, needed, notes)

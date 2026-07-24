@@ -13,7 +13,9 @@ Everything is Python 3.11 standard library — no third-party packages.
 
 1. Picks the day's niche (5-niche rotation, `daily_history.py`).
 2. Sources 2 qualifying products via `ali_api.py` (rating/orders/price/US gates,
-   brand exclusions, history de-dup) and writes a `source.json` for each.
+   brand exclusions, history de-dup) and writes a `source.json` for each. Selection
+   is **AI-free by default**: within the day's rotated niche it picks the two top
+   **bestsellers** (highest AliExpress sales volume, functionally distinct).
 3. Prepares + publishes both listings through the official eBay Sell APIs
    (`ebay_listing.py`: images → eBay Picture Services, category/aspects, qty 1,
    your fulfillment/payment/return policies, then publish + 10% promotion).
@@ -98,3 +100,8 @@ ALI_API_FIXTURE="$PWD/fixtures/ali_sample.json" \
 `ALI_SHIPPING_FLAT` (delivered-cost estimate when freight lookup is unavailable),
 `ALI_DS_DISCOVERY` (auto|text|feed), `ALI_DS_FEED_NAME`.
 Niche search queries live in `ali_api.py` (`NICHE_QUERIES`).
+
+Product selection is deterministic (top bestsellers by sales volume within the
+day's niche) unless `ALI_AI_RANK=1` is set, which opts into AI-scored resale-appeal
+ranking (needs `OPENAI_API_KEY`); any AI failure falls back to the deterministic
+bestseller ranker.
