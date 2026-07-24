@@ -62,8 +62,12 @@ App Secret, and Tracking ID.
 
 ### 3. Email
 Easiest: a Gmail **App Password** (Google Account → Security → App passwords).
-`SMTP_USER` = your Gmail address, `SMTP_PASS` = the app password. Reports are
-configured to go to **akshayecom11@gmail.com**.
+
+- `SMTP_USER` / `SMTP_PASS` — the Gmail account that **sends** the report, and its app password
+- `NOTIFY_FROM` — the "from" address (normally the same as `SMTP_USER`)
+- `NOTIFY_EMAIL` — **where reports are delivered.** Change this secret to change the recipient.
+
+Sender and recipient are independent: you can send from one account and receive at another.
 
 ### 4. Google Sheets
 1. In Google Cloud, create a project (or select an existing one) and enable the

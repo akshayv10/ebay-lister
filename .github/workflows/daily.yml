@@ -61,7 +61,7 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4.1-mini' }}
       # --- email secrets ---
-      NOTIFY_EMAIL: akshayecom11@gmail.com
+      NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
       NOTIFY_FROM: ${{ secrets.NOTIFY_FROM }}
       SMTP_HOST: ${{ vars.SMTP_HOST || 'smtp.gmail.com' }}
       SMTP_PORT: ${{ vars.SMTP_PORT || '587' }}
