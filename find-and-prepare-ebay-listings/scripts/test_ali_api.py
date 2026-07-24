@@ -53,6 +53,9 @@ def test_source_is_schema_valid() -> None:
     assert normalized["aspects"]["Brand"] == ["Unbranded"]
     assert normalized["aspects"]["MPN"] == ["N/A"]
     assert len(normalized["source_images"]) == 3
+    assert normalized["aliexpress_rating"] == 4.8
+    assert normalized["aliexpress_reviews"] == 320
+    assert normalized["aliexpress_orders"] == 540
 
 
 def test_component_titles_are_rejected() -> None:
