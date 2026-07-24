@@ -854,7 +854,8 @@ def rank_pool(pool: list[dict[str, Any]], needed: int, notes: list[str]) -> list
     deterministic ranker."""
     if len(pool) <= 1:
         return [_strip_internal(s) for s in pool[:needed]]
-    if not os.environ.get("ALI_AI_RANK", "").strip():
+    ai_rank = os.environ.get("ALI_AI_RANK", "").strip().lower() in {"1", "true", "yes", "on"}
+    if not ai_rank:
         return rank_deterministic(pool, needed, notes)
     try:
         import openai_copy

@@ -162,11 +162,18 @@ def test_rank_pool_makes_no_ai_call_by_default() -> None:
     saved = sys.modules.get("openai_copy")
     sys.modules["openai_copy"] = boom
     try:
-        picked = ali_api.rank_pool(
-            [_pool_item("20", "Car Trunk Organizer", 500),
-             _pool_item("21", "Car Cup Holder Expander", 400)], 2, [])
-        assert {p["product_id"] for p in picked} == {"20", "21"}
+        pool = [_pool_item("20", "Car Trunk Organizer", 500),
+                _pool_item("21", "Car Cup Holder Expander", 400)]
+        # Unset, and falsey values like "0"/"false" must all stay deterministic.
+        for val in (None, "0", "false", "no"):
+            if val is None:
+                os.environ.pop("ALI_AI_RANK", None)
+            else:
+                os.environ["ALI_AI_RANK"] = val
+            picked = ali_api.rank_pool(pool, 2, [])
+            assert {p["product_id"] for p in picked} == {"20", "21"}
     finally:
+        os.environ.pop("ALI_AI_RANK", None)
         if saved is not None:
             sys.modules["openai_copy"] = saved
         else:
