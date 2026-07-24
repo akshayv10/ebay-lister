@@ -68,6 +68,22 @@ def compose(result: dict[str, Any]) -> tuple[str, str, str]:
     ) if spend else ""
     if spend_line:
         text_lines += [spend_line, ""]
+    sheet_sync = result.get("sheet_sync") or {}
+    sheet_url = str(result.get("sheet_url") or os.environ.get(
+        "SHEETS_SPREADSHEET_URL",
+        "https://docs.google.com/spreadsheets/d/"
+        "10GgtsN_cxhHBvbEYa4vUXBUbC-LqeElkzmRiL3TT0Uk/edit",
+    ))
+    sheet_line = ""
+    if sheet_sync:
+        sheet_line = (
+            f"Google Sheets: {sheet_sync.get('status', 'unknown')} "
+            f"(written {sheet_sync.get('written', 0)}, queued {sheet_sync.get('queued', 0)})"
+        )
+        text_lines += [sheet_line, f"  {sheet_url}"]
+        if sheet_sync.get("error"):
+            text_lines += [f"  Sync error: {sheet_sync['error']}"]
+        text_lines.append("")
     if result.get("error"):
         text_lines += ["Error:", str(result["error"]), ""]
     notes = result.get("notes") or []
@@ -89,6 +105,16 @@ def compose(result: dict[str, Any]) -> tuple[str, str, str]:
             f'<td><a href="{ali}">AliExpress</a></td><td>{ebay_cell}</td></tr>'
         )
     spend_html = f"<p style='color:#555'>{html.escape(spend_line)}</p>" if spend_line else ""
+    sheet_html = (
+        f"<p><b>{html.escape(sheet_line)}</b><br>"
+        f'<a href="{html.escape(sheet_url)}">Open Auto Lister sheet</a>'
+        + (
+            f"<br><span style='color:#b00'>Sync error: "
+            f"{html.escape(str(sheet_sync.get('error', '')))}</span>"
+            if sheet_sync.get("error") else ""
+        )
+        + "</p>"
+    ) if sheet_sync else ""
     error_html = f"<p><b>Error:</b><br><pre>{html.escape(str(result['error']))}</pre></p>" if result.get("error") else ""
     html_body = (
         f"<h2>{_status_prefix(status)} Daily eBay auto-lister — {html.escape(date)}</h2>"
@@ -99,6 +125,7 @@ def compose(result: dict[str, Any]) -> tuple[str, str, str]:
         + "".join(rows)
         + "</table>"
         + spend_html
+        + sheet_html
         + error_html
     )
     return subject, text_body, html_body
@@ -165,11 +192,25 @@ def main() -> int:
     import argparse
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--result", required=True, help="Path to a run-summary JSON file")
+    parser.add_argument("--result", help="Path to a run-summary JSON file")
+    parser.add_argument("--test", action="store_true",
+                        help="Send a harmless delivery test without running the eBay pipeline.")
     parser.add_argument("--print-only", action="store_true", help="Compose and print, do not send")
     args = parser.parse_args()
-    with open(args.result, encoding="utf-8") as handle:
-        result = json.load(handle)
+    if args.test:
+        result = {
+            "date": "",
+            "status": "listed",
+            "niche": "notification test",
+            "listed_count": 0,
+            "products": [],
+            "notes": ["This is a delivery test. No eBay listing was created."],
+        }
+    elif args.result:
+        with open(args.result, encoding="utf-8") as handle:
+            result = json.load(handle)
+    else:
+        parser.error("one of --result or --test is required")
     subject, text_body, html_body = compose(result)
     if args.print_only:
         print(subject)
