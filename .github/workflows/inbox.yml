@@ -1,0 +1,107 @@
+name: Inbox link lister
+
+# On-demand listing from email. Email yourself (from your own address) with a subject like
+#   LIST: https://www.aliexpress.us/item/<id>.html
+# and this workflow reads the inbox, lists the linked product, and replies with the eBay link.
+#
+# STARTS PAUSED / DRY-RUN, on purpose — same posture as daily.yml. It reads mail and validates
+# but publishes NOTHING until you opt in:
+#   * Uncomment the `schedule` line to poll automatically (every 15 min).
+#   * Set repository variable LIVE_LISTING=1 (it defaults off) to actually publish.
+# With LIVE_LISTING unset/0, every run is a dry run regardless of trigger.
+on:
+  # schedule:
+  #   - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "poll the inbox"
+        type: choice
+        options:
+          - dry-run
+          - live
+        default: dry-run
+
+permissions:
+  contents: write   # allows committing updated history back to the repo
+
+concurrency:
+  group: inbox-link-lister
+  cancel-in-progress: false
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    env:
+      # --- non-secret config (committed) ---
+      EBAY_ACCOUNT_CONFIG: ebay-account.json
+      HISTORY_PATH: state/resale-product-history.jsonl
+      RUNS_DIR: ebay-listing-runs
+      RUN_TZ: ${{ vars.RUN_TZ || 'Asia/Kolkata' }}
+      ALI_DEBUG: ${{ vars.ALI_DEBUG || '0' }}
+      SHEETS_SPREADSHEET_ID: 10GgtsN_cxhHBvbEYa4vUXBUbC-LqeElkzmRiL3TT0Uk
+      SHEETS_TAB_NAME: Auto Lister
+      SHEETS_SPREADSHEET_URL: https://docs.google.com/spreadsheets/d/10GgtsN_cxhHBvbEYa4vUXBUbC-LqeElkzmRiL3TT0Uk/edit
+      GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+      # --- eBay secrets ---
+      EBAY_CLIENT_ID: ${{ secrets.EBAY_CLIENT_ID }}
+      EBAY_CLIENT_SECRET: ${{ secrets.EBAY_CLIENT_SECRET }}
+      EBAY_RUNAME: ${{ secrets.EBAY_RUNAME }}
+      EBAY_REFRESH_TOKEN: ${{ secrets.EBAY_REFRESH_TOKEN }}
+      # --- AliExpress secrets ---
+      ALIEXPRESS_APP_KEY: ${{ secrets.ALIEXPRESS_APP_KEY }}
+      ALIEXPRESS_APP_SECRET: ${{ secrets.ALIEXPRESS_APP_SECRET }}
+      ALIEXPRESS_TRACKING_ID: ${{ secrets.ALIEXPRESS_TRACKING_ID }}
+      ALIEXPRESS_ACCESS_TOKEN: ${{ secrets.ALIEXPRESS_ACCESS_TOKEN }}
+      # --- OpenAI (eBay copy) ---
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4.1-mini' }}
+      # --- email secrets (SMTP for replies, IMAP login reuses SMTP_USER/SMTP_PASS) ---
+      NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
+      NOTIFY_FROM: ${{ secrets.NOTIFY_FROM }}
+      SMTP_HOST: ${{ vars.SMTP_HOST || 'smtp.gmail.com' }}
+      SMTP_PORT: ${{ vars.SMTP_PORT || '587' }}
+      SMTP_USER: ${{ secrets.SMTP_USER }}
+      SMTP_PASS: ${{ secrets.SMTP_PASS }}
+      SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
+      IMAP_HOST: ${{ vars.IMAP_HOST || 'imap.gmail.com' }}
+      IMAP_PORT: ${{ vars.IMAP_PORT || '993' }}
+      INBOX_SUBJECT_TAG: ${{ vars.INBOX_SUBJECT_TAG || 'LIST:' }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      # Publishing requires mode=live (or a scheduled run) AND LIVE_LISTING not being '0'.
+      # Anything else runs the poller with no --live flag, which reads mail but never lists.
+      - name: Poll inbox
+        env:
+          LIVE: ${{ ((github.event_name == 'schedule' || inputs.mode == 'live') && vars.LIVE_LISTING == '1') && 'yes' || 'no' }}
+        run: |
+          if [ "$LIVE" = "yes" ]; then
+            echo "::warning::LIVE MODE — requested links will be published as real eBay listings."
+            python find-and-prepare-ebay-listings/scripts/inbox_poll.py --live
+          else
+            echo "DRY RUN — reading inbox and validating only; nothing will be listed."
+            python find-and-prepare-ebay-listings/scripts/inbox_poll.py
+          fi
+
+      - name: Heartbeat + persist history
+        if: always()
+        run: |
+          mkdir -p state
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > state/last-run.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add state
+          if git diff --cached --quiet; then
+            echo "No history changes to commit."
+          else
+            git commit -m "inbox poll heartbeat + history $(date -u +%F)"
+            git push
+          fi

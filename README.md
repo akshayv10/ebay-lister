@@ -118,11 +118,49 @@ To enable the daily schedule later, uncomment the two `schedule` lines in
 `.github/workflows/daily.yml` and set the cron to your time **in UTC**. Scheduled runs
 already publish — they are included in the LIVE condition in the run step.
 
+## List a link on demand (email)
+
+Besides the daily auto-sourcing, you can list a **specific** AliExpress product you found
+by emailing yourself a link. A separate workflow (`.github/workflows/inbox.yml`) polls the
+inbox, lists the linked product, and replies with the live eBay link.
+
+**How to use it**
+1. From the same address the lister emails (`NOTIFY_EMAIL`), send an email with subject:
+   `LIST: https://www.aliexpress.us/item/<id>.html` (the URL can also be in the body).
+2. Within the poll interval, the workflow fetches that product, lists it, and replies with
+   the eBay link — reusing the exact same pipeline as the daily run (images, variants,
+   pricing, 10% promotion).
+
+**Safety (starts paused / dry-run, like the daily workflow)**
+- Only emails **from an authorized sender** (defaults to `NOTIFY_EMAIL` / `NOTIFY_FROM` /
+  `SMTP_USER` — i.e. you) **and** with the `LIST:` subject tag are acted on. Everything else
+  is ignored. Override the allow-list with `INBOX_ALLOWED_SENDERS` (comma-separated).
+- Publishing is opt-in: set repository **variable `LIVE_LISTING=1`** to actually list.
+  Without it every run is a dry run that reads mail and validates but lists nothing.
+- To poll automatically, uncomment the `schedule` line in `inbox.yml` (every 15 min).
+  You can also run it any time via **Actions → Inbox link lister → Run workflow**.
+- **Quality gates are advisory here**: because you hand-picked the product, a gate miss
+  (e.g. few reviews) is reported as a warning in the reply email but the item is still
+  listed. Only unlistable products (no id/title/price/images) are refused.
+
+Login reuses your existing Gmail **app password** (`SMTP_USER` / `SMTP_PASS`) over IMAP —
+no new secrets. Optional variables: `IMAP_HOST` (default `imap.gmail.com`), `IMAP_PORT`
+(`993`), `INBOX_SUBJECT_TAG` (default `LIST:`).
+
+Run the single-URL lister directly (dry run by default; `--live` publishes):
+
+```bash
+cd find-and-prepare-ebay-listings/scripts
+python3 list_from_url.py "https://www.aliexpress.us/item/<id>.html"
+python3 inbox_poll.py            # dry-run poll of the inbox
+```
+
 ## Testing offline (no network, no eBay)
 
 ```bash
 cd find-and-prepare-ebay-listings/scripts
 python3 test_ali_api.py            # sourcing/gates/mapping
+python3 test_list_from_url.py      # on-demand single-URL lister (URL parse, gate warning)
 python3 test_skill.py              # eBay-side regression (never hits Production)
 ALI_API_FIXTURE="$PWD/fixtures/ali_sample.json" \
   HISTORY_PATH=/tmp/h.jsonl RUNS_DIR=/tmp/runs \
