@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import time
 import urllib.parse
@@ -31,6 +32,52 @@ from listing_job import build_review, initialize_result, normalize_source, recor
 
 
 HISTORY_PATH = Path("/Users/akballer47/Documents/Codex/resale-product-history.jsonl")
+
+
+def is_country_aspect(name: str) -> bool:
+    """True for Country/Region of Manufacture/Origin aspects, which we never fill."""
+    return "country" in name.strip().casefold()
+
+
+def _truncate_title(value: str, limit: int = 80) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    last_space = cut.rfind(" ")
+    return cut[:last_space].strip() if last_space > limit * 0.6 else cut.strip()
+
+
+def enrich_source_with_ai(source_path: Path) -> bool:
+    """Best-effort: rewrite the product's source.json title/description/aspects using OpenAI.
+    Returns True if AI copy was applied, False if it fell back to the existing template."""
+    import openai_copy
+
+    source = read_json(source_path)
+    variant = (source.get("selected_variants") or [{}])[0]
+    try:
+        copy = openai_copy.generate_listing(
+            source.get("source_title", ""),
+            source.get("category_query", ""),
+            str(variant.get("visible_item_price", "")),
+            source.get("source_images", []) if isinstance(source.get("source_images"), list) else [],
+        )
+    except openai_copy.CopyError:
+        return False
+
+    source["listing_title"] = _truncate_title(copy["title"]) or source.get("listing_title", "")
+    if copy.get("description"):
+        source["listing_description"] = copy["description"]
+    aspects: dict[str, Any] = {}
+    for name, value in copy.get("item_specifics", {}).items():
+        if not name.strip() or is_country_aspect(name):
+            continue
+        aspects[name.strip()] = [value] if not isinstance(value, list) else value
+    aspects["Brand"] = ["Unbranded"]
+    aspects["MPN"] = ["N/A"]
+    source["aspects"] = aspects
+    write_json(source_path, source)
+    return True
 
 
 def require_setup(client: EbayClient) -> dict[str, Any]:
@@ -100,6 +147,11 @@ def category_and_aspects(client: EbayClient, source: dict[str, Any]) -> tuple[st
             continue
         official = str(definition.get("localizedAspectName", "")).strip()
         constraint = definition.get("aspectConstraint", {}) if isinstance(definition.get("aspectConstraint"), dict) else {}
+        # Never fill Country of Origin / Manufacture (user preference): drop any provided
+        # value and never treat it as required-missing, so it stays blank.
+        if is_country_aspect(official):
+            provided.pop(official.casefold(), None)
+            continue
         match = provided.pop(official.casefold(), None)
         if match is None:
             if constraint.get("aspectRequired") is True:
@@ -116,13 +168,21 @@ def category_and_aspects(client: EbayClient, source: dict[str, Any]) -> tuple[st
         ]
         if allowed and str(constraint.get("aspectMode", "")).upper() == "SELECTION_ONLY":
             official_values = {value.casefold(): value for value in allowed}
-            invalid = [value for value in values if value.casefold() not in official_values]
-            if invalid:
-                raise EbayError(f"Invalid selection-only value for {official}: {invalid[0]}")
-            values = [official_values[value.casefold()] for value in values]
+            values = [official_values[value.casefold()] for value in values if value.casefold() in official_values]
+            if not values:
+                # AI-supplied value isn't in eBay's allowed list — drop it rather than fail
+                # the listing. If the aspect is required, autofill supplies a valid default.
+                if constraint.get("aspectRequired") is True:
+                    filled = autofill_required_aspect(definition, constraint)
+                    if filled is not None:
+                        normalized[official] = filled
+                    else:
+                        required_missing.append(official)
+                continue
         normalized[official] = values
     for _, (name, values) in provided.items():
-        normalized[name] = list(values)
+        if not is_country_aspect(name):
+            normalized[name] = list(values)
     if required_missing:
         raise EbayError(f"Missing required eBay item specifics: {', '.join(required_missing)}")
 
@@ -250,7 +310,7 @@ def prepare_product(client: EbayClient, config: dict[str, Any], result_path: Pat
                 "brand": source["verified_brand"],
                 # eBay's BrandMPN validation wants an MPN alongside Brand; send it as a
                 # first-class field as well as an aspect.
-                "mpn": (aspects.get("MPN") or ["Does Not Apply"])[0],
+                "mpn": (aspects.get("MPN") or ["N/A"])[0],
                 "imageUrls": eps_urls,
             },
         }
@@ -678,6 +738,11 @@ def list_one(client: EbayClient, config: dict[str, Any], source_path: Path) -> d
     """Prepare, publish, and 10%-promote a single product. Returns the live product
     dict, or raises. If promotion fails after publish, the offer is withdrawn so we
     never leave an unpromoted live listing."""
+    # Best-effort AI copy (title/description/specifics). Never let it block a listing.
+    try:
+        enrich_source_with_ai(source_path)
+    except Exception:  # noqa: BLE001
+        pass
     result_path = source_path.with_name("result.json")
     initialize_result(source_path, result_path)
     result = read_json(result_path)

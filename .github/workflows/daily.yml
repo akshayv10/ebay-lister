@@ -39,6 +39,9 @@ jobs:
       ALIEXPRESS_APP_KEY: ${{ secrets.ALIEXPRESS_APP_KEY }}
       ALIEXPRESS_APP_SECRET: ${{ secrets.ALIEXPRESS_APP_SECRET }}
       ALIEXPRESS_TRACKING_ID: ${{ secrets.ALIEXPRESS_TRACKING_ID }}
+      # --- OpenAI (eBay copy) ---
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4.1-mini' }}
       # --- email secrets ---
       NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
       NOTIFY_FROM: ${{ secrets.NOTIFY_FROM }}

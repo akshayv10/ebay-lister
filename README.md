@@ -69,8 +69,11 @@ Push this repo (private), then add **Settings → Secrets and variables → Acti
 | `SMTP_USER` / `SMTP_PASS` | Gmail address + app password |
 | `NOTIFY_EMAIL` | where reports go (e.g. akshayv10@gmail.com) |
 | `NOTIFY_FROM` | usually same as `SMTP_USER` |
+| `OPENAI_API_KEY` | OpenAI key for AI-written eBay title/description/specifics (gpt-4.1-mini) |
 
-Optional **Variables**: `RUN_TZ` (default `Asia/Kolkata`), `SMTP_HOST`, `SMTP_PORT`.
+Optional **Variables**: `RUN_TZ` (default `Asia/Kolkata`), `SMTP_HOST`, `SMTP_PORT`,
+`OPENAI_MODEL` (default `gpt-4.1-mini`). Without `OPENAI_API_KEY` the listings still
+publish, using a plain template description instead of AI copy.
 
 ### 5. Schedule
 Edit the `cron` in `.github/workflows/daily.yml` to your desired time **in UTC**

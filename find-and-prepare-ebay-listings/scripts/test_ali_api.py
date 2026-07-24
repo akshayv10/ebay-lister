@@ -51,7 +51,23 @@ def test_source_is_schema_valid() -> None:
     assert len(normalized["listing_title"]) <= 80
     assert normalized["selected_variants"][0]["sku"].startswith("ALI-1005006000000001-")
     assert normalized["aspects"]["Brand"] == ["Unbranded"]
+    assert normalized["aspects"]["MPN"] == ["N/A"]
     assert len(normalized["source_images"]) == 3
+
+
+def test_string_list_reads_feed_image_key() -> None:
+    # The DS feed nests gallery images under productSmallImageUrl — all must be captured.
+    card = {
+        "product_id": "1005006000000099",
+        "product_title": "USB C Hub Adapter Multiport",
+        "target_sale_price": "18.00",
+        "evaluate_rate": "96.0%",
+        "lastest_volume": "500",
+        "product_main_image_url": "https://x/main.jpg",
+        "product_small_image_urls": {"productSmallImageUrl": ["https://x/a.jpg", "https://x/b.jpg", "https://x/c.jpg"]},
+    }
+    flat = ali_api.flatten_card(card)
+    assert flat["images"] == ["https://x/main.jpg", "https://x/a.jpg", "https://x/b.jpg", "https://x/c.jpg"]
 
 
 def test_source_products_finds_two() -> None:

@@ -163,9 +163,14 @@ def _string_list(value: Any) -> list[str]:
     if value is None:
         return []
     if isinstance(value, dict):
-        for key in ("string", "value"):
+        # TOP wraps lists under various keys: {"string": [...]}, {"value": [...]},
+        # and the DS feed's images under {"productSmallImageUrl": [...]}.
+        for key in ("string", "value", "productSmallImageUrl", "productSmallImageUrls"):
             if key in value:
                 return _string_list(value[key])
+        for nested in value.values():  # fall back to the first list value present
+            if isinstance(nested, list):
+                return _string_list(nested)
         return []
     if isinstance(value, str):
         parts = re.split(r"[;\n,]\s*", value.strip()) if value.strip() else []
@@ -443,10 +448,10 @@ def product_to_source(flat: dict[str, Any], niche: str, run_stamp: str, local_da
         # are auto-filled downstream (EBAY_AUTOFILL_REQUIRED_ASPECTS), so we send only
         # the verified Brand to avoid selection-only aspect conflicts.
         "category_query": ebay_title,
-        # eBay's BrandMPN rule requires an MPN whenever Brand is supplied; "Does Not
-        # Apply" is the accepted value for unbranded goods. MPN is free text, so it
-        # cannot trip the selection-only aspect validation.
-        "aspects": {"Brand": ["Unbranded"], "MPN": ["Does Not Apply"]},
+        # eBay's BrandMPN rule requires an MPN whenever Brand is supplied. MPN is free
+        # text so it cannot trip selection-only validation. (AI enrichment may add more
+        # item specifics at listing time; this is the fallback set.)
+        "aspects": {"Brand": ["Unbranded"], "MPN": ["N/A"]},
         "source_images": flat["images"],
         "selected_variants": [
             {
