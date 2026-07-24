@@ -1,3 +1,2 @@
-# No third-party dependencies — the whole pipeline uses the Python 3.11 standard
-# library only (urllib, hmac, smtplib, zoneinfo, etc.). This file exists so the
-# workflow's `pip install -r requirements.txt` is a no-op if you add deps later.
+# Service-account signing and token refresh for the Google Sheets integration.
+google-auth>=2.40,<3

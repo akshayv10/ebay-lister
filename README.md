@@ -3,9 +3,11 @@
 Sources **2 AliExpress products/day** via the official AliExpress API, lists both
 **live on eBay** (main images only, shipping from your existing eBay policy), and
 **emails you** the result with each product's AliExpress link and live eBay link.
-Runs unattended in GitHub Actions (your computer can be off). Cost ≈ $0/month.
+Runs unattended in GitHub Actions (your computer can be off). Successful live
+listings are also upserted into the workbook's **Auto Lister** tab. Cost ≈ $0/month.
 
-Everything is Python 3.11 standard library — no third-party packages.
+The pipeline is Python 3.11. Google service-account authentication uses
+`google-auth`; application API calls otherwise use the standard library.
 
 ## How it works
 
@@ -19,8 +21,10 @@ Everything is Python 3.11 standard library — no third-party packages.
 3. Prepares + publishes both listings through the official eBay Sell APIs
    (`ebay_listing.py`: images → eBay Picture Services, category/aspects, qty 1,
    your fulfillment/payment/return policies, then publish + 10% promotion).
-4. Emails a report (`notify.py`).
-5. The workflow commits updated history in `state/` back to the repo.
+4. Upserts live listings into Google Sheets (`sheet_sync.py`), queuing transient
+   failures under `state/` for replay on the next run.
+5. Emails a report (`notify.py`) including the sheet-sync result.
+6. The workflow commits updated history and pending-sync state back to the repo.
 
 > Note: eBay policy compliance is your responsibility. Publishing attaches a
 > mandatory **10% Promoted Listings (General/CPS)** ad to each listing.
@@ -58,9 +62,23 @@ App Secret, and Tracking ID.
 
 ### 3. Email
 Easiest: a Gmail **App Password** (Google Account → Security → App passwords).
-`SMTP_USER` = your Gmail address, `SMTP_PASS` = the app password.
+`SMTP_USER` = your Gmail address, `SMTP_PASS` = the app password. Reports are
+configured to go to **akshayecom11@gmail.com**.
 
-### 4. GitHub
+### 4. Google Sheets
+1. In Google Cloud, create a project (or select an existing one) and enable the
+   **Google Sheets API**.
+2. Create a service account and download one JSON key.
+3. Share the target workbook with the service account's `client_email` as
+   **Editor**.
+4. Save the complete JSON key as the GitHub Actions secret
+   `GOOGLE_SERVICE_ACCOUNT_JSON`.
+
+The scheduled workflow writes only to a separate `Auto Lister` tab in spreadsheet
+`10GgtsN_cxhHBvbEYa4vUXBUbC-LqeElkzmRiL3TT0Uk`. It does not modify the legacy
+`Ebay` tab.
+
+### 5. GitHub
 Push this repo (private), then add **Settings → Secrets and variables → Actions**:
 
 | Secret | Value |
@@ -69,18 +87,22 @@ Push this repo (private), then add **Settings → Secrets and variables → Acti
 | `EBAY_REFRESH_TOKEN` | from `ebay_setup.py authorize` |
 | `ALIEXPRESS_APP_KEY` / `ALIEXPRESS_APP_SECRET` / `ALIEXPRESS_TRACKING_ID` | AliExpress app |
 | `SMTP_USER` / `SMTP_PASS` | Gmail address + app password |
-| `NOTIFY_EMAIL` | where reports go (e.g. akshayv10@gmail.com) |
 | `NOTIFY_FROM` | usually same as `SMTP_USER` |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | complete service-account key JSON |
 | `OPENAI_API_KEY` | OpenAI key for AI-written eBay title/description/specifics (gpt-4.1-mini) |
 
 Optional **Variables**: `RUN_TZ` (default `Asia/Kolkata`), `SMTP_HOST`, `SMTP_PORT`,
 `OPENAI_MODEL` (default `gpt-4.1-mini`). Without `OPENAI_API_KEY` the listings still
 publish, using a plain template description instead of AI copy.
 
-### 5. Schedule
+### 6. Schedule
 Edit the `cron` in `.github/workflows/daily.yml` to your desired time **in UTC**
-(it currently runs 14:00 UTC). Trigger a manual run from the **Actions** tab
-("Run workflow", optionally with **dry run** checked) to test.
+(it currently runs 14:00 UTC). Manual workflow modes are:
+
+- `dry-run` (default): source and validate without eBay, email, or Sheets writes
+- `sheet-sync-only`: create/repair `Auto Lister`, replay queued rows, and backfill history
+- `email-test`: send a harmless test message without creating a listing
+- `full`: run the production listing pipeline
 
 ## Testing offline (no network, no eBay)
 

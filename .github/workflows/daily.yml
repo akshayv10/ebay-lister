@@ -8,10 +8,15 @@ on:
     - cron: "0 14 * * *"
   workflow_dispatch:
     inputs:
-      dry_run:
-        description: "Source + validate only (no eBay listing, no email)"
-        type: boolean
-        default: false
+      mode:
+        description: "Safe manual operation"
+        type: choice
+        options:
+          - dry-run
+          - sheet-sync-only
+          - email-test
+          - full
+        default: dry-run
 
 permissions:
   contents: write   # allows committing updated history back to the repo
@@ -30,6 +35,10 @@ jobs:
       RUNS_DIR: ebay-listing-runs
       RUN_TZ: ${{ vars.RUN_TZ || 'Asia/Kolkata' }}
       ALI_DEBUG: ${{ vars.ALI_DEBUG || '0' }}
+      SHEETS_SPREADSHEET_ID: 10GgtsN_cxhHBvbEYa4vUXBUbC-LqeElkzmRiL3TT0Uk
+      SHEETS_TAB_NAME: Auto Lister
+      SHEETS_SPREADSHEET_URL: https://docs.google.com/spreadsheets/d/10GgtsN_cxhHBvbEYa4vUXBUbC-LqeElkzmRiL3TT0Uk/edit
+      GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
       # --- eBay secrets ---
       EBAY_CLIENT_ID: ${{ secrets.EBAY_CLIENT_ID }}
       EBAY_CLIENT_SECRET: ${{ secrets.EBAY_CLIENT_SECRET }}
@@ -43,7 +52,7 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4.1-mini' }}
       # --- email secrets ---
-      NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
+      NOTIFY_EMAIL: akshayecom11@gmail.com
       NOTIFY_FROM: ${{ secrets.NOTIFY_FROM }}
       SMTP_HOST: ${{ vars.SMTP_HOST || 'smtp.gmail.com' }}
       SMTP_PORT: ${{ vars.SMTP_PORT || '587' }}
@@ -57,10 +66,22 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
       - name: Run daily lister
+        if: github.event_name == 'schedule' || inputs.mode == 'full' || inputs.mode == 'dry-run'
         run: |
           python find-and-prepare-ebay-listings/scripts/daily_run.py \
-            ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '--dry-run' || '' }}
+            ${{ (github.event_name == 'workflow_dispatch' && inputs.mode == 'dry-run') && '--dry-run' || '' }}
+
+      - name: Backfill and sync Google Sheet
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'sheet-sync-only'
+        run: python find-and-prepare-ebay-listings/scripts/sheet_sync.py --backfill-history
+
+      - name: Send notification test
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'email-test'
+        run: python find-and-prepare-ebay-listings/scripts/notify.py --test
 
       - name: Heartbeat + persist history
         if: always()
