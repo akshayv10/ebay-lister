@@ -52,11 +52,17 @@ def main() -> int:
     app_secret = _require("ALIEXPRESS_APP_SECRET")
     callback = os.environ.get("ALIEXPRESS_CALLBACK_URL", DEFAULT_CALLBACK).strip()
 
+    # AliExpress docs are inconsistent: some use redirect_uri, others redirect_url.
+    # Sending both is harmless and covers either expectation.
     consent = (
         f"{AUTHORIZE_URL}?"
-        + urllib.parse.urlencode(
-            {"response_type": "code", "force_auth": "true", "redirect_uri": callback, "client_id": app_key}
-        )
+        + urllib.parse.urlencode({
+            "response_type": "code",
+            "force_auth": "true",
+            "redirect_uri": callback,
+            "redirect_url": callback,
+            "client_id": app_key,
+        })
     )
     print("\nUsing:")
     print(f"  client_id (app key): {app_key}")
