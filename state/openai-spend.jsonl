@@ -1,3 +1,7 @@
 {"cost_usd": 0.001445, "date": "2026-07-24", "input_tokens": 2512, "model": "gpt-4.1-mini", "output_tokens": 275, "purpose": "ranking", "ts": "2026-07-24T08:59:13+00:00"}
 {"cost_usd": 0.004708, "date": "2026-07-24", "input_tokens": 9887, "model": "gpt-4.1-mini", "output_tokens": 471, "purpose": "listing_copy", "ts": "2026-07-24T08:59:26+00:00"}
 {"cost_usd": 0.005275, "date": "2026-07-24", "input_tokens": 11255, "model": "gpt-4.1-mini", "output_tokens": 483, "purpose": "listing_copy", "ts": "2026-07-24T08:59:54+00:00"}
+{"cost_usd": 0.001356, "date": "2026-07-24", "input_tokens": 2521, "model": "gpt-4.1-mini", "output_tokens": 217, "purpose": "ranking", "ts": "2026-07-24T09:57:57+00:00"}
+{"cost_usd": 0.003743, "date": "2026-07-24", "input_tokens": 7105, "model": "gpt-4.1-mini", "output_tokens": 563, "purpose": "listing_copy", "ts": "2026-07-24T09:58:13+00:00"}
+{"cost_usd": 0.006833, "date": "2026-07-24", "input_tokens": 15014, "model": "gpt-4.1-mini", "output_tokens": 517, "purpose": "listing_copy", "ts": "2026-07-24T09:58:36+00:00"}
+{"cost_usd": 0.004166, "date": "2026-07-24", "input_tokens": 8679, "model": "gpt-4.1-mini", "output_tokens": 434, "purpose": "listing_copy", "ts": "2026-07-24T09:58:56+00:00"}
