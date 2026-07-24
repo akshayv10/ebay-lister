@@ -79,6 +79,15 @@ def normalize_source(source: dict[str, Any]) -> dict[str, Any]:
         "functional_fingerprint", "verified_brand", "listing_title", "listing_description",
     ):
         normalized[key] = require_text(source, key)
+    for key in ("aliexpress_rating", "aliexpress_reviews", "aliexpress_orders", "appeal_score"):
+        value = source.get(key)
+        if value not in (None, ""):
+            try:
+                normalized[key] = float(value)
+            except (TypeError, ValueError) as exc:
+                raise JobError(f"{key} must be numeric when provided") from exc
+    if source.get("appeal_reason") not in (None, ""):
+        normalized["appeal_reason"] = str(source["appeal_reason"]).strip()
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", normalized["local_calendar_date"]):
         raise JobError("local_calendar_date must be YYYY-MM-DD")
     if len(normalized["listing_title"]) > 80:
