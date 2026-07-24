@@ -8,7 +8,8 @@ Run:
 
 Environment (see .github/workflows/daily.yml and README):
     RUN_TZ (default Asia/Kolkata), HISTORY_PATH (default state/resale-product-history.jsonl),
-    RUNS_DIR (default ebay-listing-runs), EBAY_ACCOUNT_CONFIG, eBay + AliExpress + email secrets.
+    RUNS_DIR (default ebay-listing-runs), EBAY_ACCOUNT_CONFIG, eBay + AliExpress +
+    email + Google Sheets secrets.
 """
 
 from __future__ import annotations
@@ -143,6 +144,17 @@ def run(dry_run: bool) -> dict[str, Any]:
     result["products"] = listed_summaries(listed)
     result["listed_count"] = int(run_result.get("listed_count", len(listed)))
     result["notes"] += run_result.get("errors", [])
+    try:
+        import sheet_sync
+
+        result["sheet_sync"] = sheet_sync.sync_products(listed)
+    except Exception as exc:  # noqa: BLE001 - listing success must survive tracking failures
+        result["sheet_sync"] = {
+            "status": "queued",
+            "written": 0,
+            "queued": len(listed),
+            "error": f"Could not prepare Google Sheets sync: {exc}",
+        }
     if result["listed_count"] >= 2:
         result["status"] = "listed"
     elif result["listed_count"] == 1:
