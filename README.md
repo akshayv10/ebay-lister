@@ -118,7 +118,7 @@ ALI_API_FIXTURE="$PWD/fixtures/ali_sample.json" \
 
 ## Tuning (environment variables)
 
-`ALI_MIN_RATING` (4.5), `ALI_MIN_REVIEWS` (25), `ALI_MIN_ORDERS` (100),
+`ALI_MIN_RATING` (4.5), `ALI_MIN_REVIEWS` (25), `ALI_MIN_ORDERS` (500),
 `ALI_MIN_PRICE_USD` (15), `ALI_USE_FREIGHT` (1), `ALI_SHIPPING_PCT` /
 `ALI_SHIPPING_FLAT` (delivered-cost estimate when freight lookup is unavailable),
 `ALI_DS_DISCOVERY` (auto|text|feed), `ALI_DS_FEED_NAME`.

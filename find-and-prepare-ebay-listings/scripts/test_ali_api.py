@@ -58,6 +58,22 @@ def test_source_is_schema_valid() -> None:
     assert normalized["aliexpress_orders"] == 540
 
 
+def test_orders_gate_enforces_minimum() -> None:
+    def card(orders: int) -> dict:
+        return {
+            "product_id": "1005006000000077",
+            "product_title": "LED Strip Light Kit RGB Bluetooth",
+            "target_sale_price": "19.99",
+            "evaluate_rate": "96.0%",
+            "lastest_volume": str(orders),
+            "product_main_image_url": "https://x/main.jpg",
+        }
+
+    assert ali_api.MIN_ORDERS == 500
+    assert ali_api.gate_reason(ali_api.flatten_card(card(499))) == "orders < 500"
+    assert ali_api.gate_reason(ali_api.flatten_card(card(500))) is None
+
+
 def test_component_titles_are_rejected() -> None:
     # The "12pcs watercooling fittings" class of product must never be listed.
     for title in [
