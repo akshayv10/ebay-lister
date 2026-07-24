@@ -31,6 +31,39 @@ def test_generate_listing_parses_and_returns_specifics() -> None:
     assert result["item_specifics"]["Type"] == "USB Hub"
 
 
+def test_markdown_description_becomes_ebay_html() -> None:
+    # eBay renders HTML; Markdown would show literal ** and --- to buyers.
+    markdown = (
+        "Intro sentence about the model. --- **Key Features:** "
+        "- *Precision:* Accurate shape. - *Robust:* ABS plastic. - *Large:* 67cm / 26.4in."
+    )
+    html = openai_copy.to_html(markdown)
+    assert "**" not in html and "---" not in html
+    assert "<hr>" in html and "<strong>Key Features:</strong>" in html
+    assert html.count("<li>") == 3
+
+
+def test_existing_html_is_preserved() -> None:
+    html = openai_copy.to_html("<p>Intro</p><h3>Features</h3><ul><li>One</li></ul>")
+    assert html == "<p>Intro</p><h3>Features</h3><ul><li>One</li></ul>"
+
+
+def test_generated_description_is_html_not_markdown() -> None:
+    os.environ["OPENAI_API_KEY"] = "test-key"
+
+    def markdown_transport(body):
+        listing = {
+            "title": "Formula Race Car Model Kit 1:8 Scale 1642 Pieces 67cm / 26.4in Display Build",
+            "description": "Great build. --- **Specs:** - *Scale:* 1:8 - *Length:* 67cm - *Weight:* 1.2kg",
+            "itemSpecifics": {"Type": "Model Kit"},
+        }
+        return {"output_text": __import__("json").dumps(listing)}
+
+    result = openai_copy.generate_listing("Race car kit", "Models", "40.00", [], transport=markdown_transport)
+    assert "**" not in result["description"]
+    assert "<ul>" in result["description"]
+
+
 def _fake_rank_transport(body):
     ranked = {"ranked": [
         {"id": "222", "score": 9, "reason": "RC drone, high gift appeal"},

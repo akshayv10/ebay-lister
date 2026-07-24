@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import urllib.request
 from typing import Any
 
@@ -55,11 +56,28 @@ ITEM_SPECIFICS_RULES = (
     "- Include every key you can support from the source data; add category-appropriate keys "
     "where the source supports them.\n"
     "- Do NOT include Country/Region of Manufacture or Country/Region of Origin.\n"
+    "- Never state a country of origin/manufacture anywhere, including in the description "
+    "text or its specification list. Omit it entirely.\n"
     "- Keep each value under 65 characters, one plain value per key (no lists).\n"
     '- Brand must be "Unbranded"; MPN must be "N/A".\n'
 )
 
 SYSTEM = "You generate accurate, policy-conscious ecommerce listing data as strict JSON."
+
+# eBay renders the description field as HTML, so Markdown shows up as literal "**" and
+# "---" characters. Demand real tags.
+HTML_RULES = (
+    "\n\nDESCRIPTION FORMAT — CRITICAL:\n"
+    "The description field is rendered as raw HTML on eBay. Output HTML tags only.\n"
+    "- Never use Markdown. Do not output **bold**, *italic*, ---, or '- ' bullets.\n"
+    "- Bold/headers: <h3>Heading</h3> and <strong>text</strong>\n"
+    "- Bullets: <ul><li>point</li><li>point</li></ul>\n"
+    "- Horizontal rule: <hr>\n"
+    "- Paragraphs: <p>text</p>\n"
+    "- Line breaks: <br>\n"
+    "Example: <p>Intro sentence.</p><h3>Key Features</h3><ul><li><strong>Durable:</strong> "
+    "ABS build.</li></ul><hr><h3>Specifications</h3><ul><li>Length: 67cm / 26.4in</li></ul>\n"
+)
 
 SCHEMA = {
     "type": "object",
@@ -119,6 +137,64 @@ RANKING_SCHEMA = {
         }
     },
 }
+
+
+_BLOCK_TAG = re.compile(r"<(p|ul|ol|li|h[1-6]|div|br|hr|table)\b", re.I)
+
+
+def to_html(text: str) -> str:
+    """Safety net: convert any Markdown the model emits into eBay-safe HTML.
+
+    eBay renders the description as HTML, so '**bold**', '---' and '- ' bullets would
+    otherwise appear as literal characters. Already-HTML input is passed through with
+    only stray Markdown cleaned up.
+    """
+    text = (text or "").strip()
+    if not text:
+        return text
+    # Inline markdown is safe to convert in both branches.
+    text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text, flags=re.S)
+    text = re.sub(r"(?<![\w*])\*(?!\s)(.+?)(?<!\s)\*(?![\w*])", r"<em>\1</em>", text, flags=re.S)
+
+    if _BLOCK_TAG.search(text):  # model complied — just normalise leftover rules
+        text = re.sub(r"(?m)^\s*-{3,}\s*$", "<hr>", text)
+        return text.replace(" --- ", "<hr>")
+
+    # Markdown fallback: treat '---' as a block separator, then build blocks.
+    text = re.sub(r"\s*-{3,}\s*", "\n---\n", text)
+    blocks: list[str] = []
+    bullets: list[str] = []
+
+    def flush() -> None:
+        if bullets:
+            blocks.append("<ul>" + "".join(f"<li>{b}</li>" for b in bullets) + "</ul>")
+            bullets.clear()
+
+    for raw_line in text.split("\n"):
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line == "---":
+            flush()
+            blocks.append("<hr>")
+            continue
+        bullet = re.match(r"^[-*•]\s+(.*)$", line)
+        if bullet:
+            bullets.append(bullet.group(1).strip())
+            continue
+        # A single run-on line can hold several " - " bullets; split when there are 2+.
+        parts = re.split(r"\s+-\s+(?=\S)", line)
+        if len(parts) > 2:
+            flush()
+            head = parts[0].strip()
+            if head:
+                blocks.append(f"<p>{head}</p>")
+            blocks.append("<ul>" + "".join(f"<li>{p.strip()}</li>" for p in parts[1:] if p.strip()) + "</ul>")
+            continue
+        flush()
+        blocks.append(f"<p>{line}</p>")
+    flush()
+    return "".join(blocks)
 
 
 def _usage(payload: dict[str, Any]) -> tuple[int, int]:
@@ -220,6 +296,7 @@ def generate_listing(
     prompt = (
         EXACT_EBAY_PROMPT
         + ITEM_SPECIFICS_RULES
+        + HTML_RULES
         + "\n\nSource product data:\n"
         + json.dumps(product, ensure_ascii=False)
     )
@@ -244,7 +321,8 @@ def generate_listing(
         raise CopyError(f"OpenAI returned unparseable listing: {exc}") from exc
 
     title = str(listing.get("title", "")).strip()
-    description = str(listing.get("description", "")).strip()
+    # eBay renders this as HTML — convert any Markdown the model still emitted.
+    description = to_html(str(listing.get("description", "")).strip())
     if not title or not description:
         raise CopyError("OpenAI listing missing title or description")
     specifics_raw = listing.get("itemSpecifics", {})
