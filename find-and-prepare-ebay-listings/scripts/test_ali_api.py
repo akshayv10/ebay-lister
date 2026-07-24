@@ -55,6 +55,20 @@ def test_source_is_schema_valid() -> None:
     assert len(normalized["source_images"]) == 3
 
 
+def test_component_titles_are_rejected() -> None:
+    # The "12pcs watercooling fittings" class of product must never be listed.
+    for title in [
+        "8pcs 12pcs for ID10mm OD16mm Soft Pipes Fitting Connector",
+        "M3 Screw Kit Stainless Steel Bolts Nuts Assortment",
+        "WiFi Antenna FPC Connector For Samsung S22 Flex Cable",
+        "Replacement Keycap Key Cap Scissor Clip For Lenovo Keyboard",
+        "Screen INCELL LCD Replacement For iPhone 14 Pro With Tools",
+    ]:
+        assert ali_api.is_component(title), title
+    for title in ["RC Drone 4K Camera Foldable Quadcopter", "LED Strip Light Kit RGB"]:
+        assert not ali_api.is_component(title), title
+
+
 def test_string_list_reads_feed_image_key() -> None:
     # The DS feed nests gallery images under productSmallImageUrl — all must be captured.
     card = {

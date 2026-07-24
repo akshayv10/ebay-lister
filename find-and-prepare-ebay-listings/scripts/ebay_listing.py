@@ -65,6 +65,14 @@ def enrich_source_with_ai(source_path: Path) -> bool:
     except openai_copy.CopyError:
         return False
 
+    try:
+        import spend
+
+        tokens_in, tokens_out = copy.get("usage", (0, 0))
+        spend.record(copy.get("model", ""), tokens_in, tokens_out, purpose="listing_copy")
+    except Exception:  # noqa: BLE001 - bookkeeping must never block a listing
+        pass
+
     source["listing_title"] = _truncate_title(copy["title"]) or source.get("listing_title", "")
     if copy.get("description"):
         source["listing_description"] = copy["description"]

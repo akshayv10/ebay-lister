@@ -167,6 +167,14 @@ def main() -> int:
         result = {"date": _now().date().isoformat(), "status": "error",
                   "products": [], "listed_count": 0, "error": f"Unhandled error: {exc}"}
 
+    # Running OpenAI spend (ledger lives in state/, committed back by the workflow).
+    try:
+        import spend
+
+        result["spend"] = spend.totals()
+    except Exception:  # noqa: BLE001
+        pass
+
     # Persist the summary next to the run for auditing / the workflow commit-back.
     summary_dir = RUNS_DIR / str(result.get("run_stamp", "last"))
     try:

@@ -60,6 +60,14 @@ def compose(result: dict[str, Any]) -> tuple[str, str, str]:
         else:
             text_lines.append(f"  eBay: NOT LISTED — {product.get('reason', 'see error below')}")
         text_lines.append("")
+    spend = result.get("spend") or {}
+    spend_line = (
+        f"OpenAI spend — today ${spend.get('today', 0):.4f} · "
+        f"this month ${spend.get('month_to_date', 0):.4f} · "
+        f"all-time ${spend.get('all_time', 0):.4f}"
+    ) if spend else ""
+    if spend_line:
+        text_lines += [spend_line, ""]
     if result.get("error"):
         text_lines += ["Error:", str(result["error"]), ""]
     notes = result.get("notes") or []
@@ -80,6 +88,7 @@ def compose(result: dict[str, Any]) -> tuple[str, str, str]:
             f"<td>USD {html.escape(str(product.get('price','')))}</td>"
             f'<td><a href="{ali}">AliExpress</a></td><td>{ebay_cell}</td></tr>'
         )
+    spend_html = f"<p style='color:#555'>{html.escape(spend_line)}</p>" if spend_line else ""
     error_html = f"<p><b>Error:</b><br><pre>{html.escape(str(result['error']))}</pre></p>" if result.get("error") else ""
     html_body = (
         f"<h2>{_status_prefix(status)} Daily eBay auto-lister — {html.escape(date)}</h2>"
@@ -89,6 +98,7 @@ def compose(result: dict[str, Any]) -> tuple[str, str, str]:
         "<tr><th>#</th><th>Title</th><th>Price</th><th>Source</th><th>eBay listing</th></tr>"
         + "".join(rows)
         + "</table>"
+        + spend_html
         + error_html
     )
     return subject, text_body, html_body

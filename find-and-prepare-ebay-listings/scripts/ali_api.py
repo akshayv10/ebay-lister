@@ -112,6 +112,41 @@ NICHE_FEEDS: dict[str, list[str]] = {
 # General fallback feeds if a niche's feeds return nothing usable.
 FALLBACK_FEEDS = ["AEB_Droplo_BestsellersItems_20241016", "AEB_i69_FullCategory_TopSellers_20241225"]
 
+# Product selection is no longer driven by the niche rotation ("best product wins").
+# These consumer-goods feeds are sourced together and the pool is ranked by appeal.
+# Chosen from the app's 125 feeds, biased to giftable/gadget/toy/RC/home categories.
+CONSUMER_FEEDS: list[str] = [
+    "AEB_Droplo_BestsellersItems_20241016",
+    "AEB_i69_FullCategory_TopSellers_20241225",
+    "DS_NewArrivals",
+    "DS_SHOPLAZZA_Toys&Hobbies_$20+_20241115",
+    "DS_Home&Kitchen_bestsellers",
+    "DS_ConsumerElectronics_bestsellers",
+    "DS_Sports&Outdoors_bestsellers",
+    "AEB_SurpriseBox_TechKidsWomen_20241024",
+    "US_Dolls&Accessories",
+    "toys_ZA topsellers_ 20240423",
+    "AEB_US_Home&Garden_TopSellers",
+    "AEB_US_Lighting_TopSellers",
+    "DS_Beauty_bestsellers",
+    "AEB_Fetch_Garden&Tool&Pet&AutoParts_TopSellers_20241210",
+    "DS_Automotive&Motorcycle 10$+",
+]
+
+# Spare parts / components / repair items. Free deterministic filter that runs before any
+# AI call — these are what produced the "12pcs watercooling fittings" listing.
+COMPONENT_TERMS = {
+    "screw", "bolt", "washer", "ferrule", "fitting", "connector", "terminal",
+    "flex cable", "ribbon cable", "pcb", "motherboard", "mainboard", "keycap",
+    "spudger", "pry tool", "solder", "resistor", "capacitor", "transistor",
+    "module board", "breakout board", "jumper wire", "dupont", "fpc",
+    "digitizer", "lcd replacement", "screen replacement", "replacement screen",
+    "battery replacement", "replacement battery", "sim tray", "thermal pad",
+    "heat sink", "heatsink", "tubing", "bearing", "gasket", "o-ring", "bushing",
+    "spare part", "replacement part", "repair kit", "repair tool", "grommet",
+    "spare parts", "circuit board", "logic board", "flex ribbon",
+}
+
 # Established global brands to reject (illustrative, per daily-sourcing.md).
 BRAND_EXCLUSIONS = {
     "apple", "iphone", "ipad", "airpods", "samsung", "galaxy", "lenovo", "sony",
@@ -370,6 +405,12 @@ def restricted(title: str) -> bool:
     return any(term in lowered for term in RESTRICTED_TERMS | DEVICE_EXCLUSIONS)
 
 
+def is_component(title: str) -> bool:
+    """True for spare parts / repair components that make dull eBay listings."""
+    lowered = f" {title.casefold()} "
+    return any(term in lowered for term in COMPONENT_TERMS)
+
+
 def gate_reason(flat: dict[str, Any]) -> str | None:
     """None if the flat detail passes every gate, else a short failure reason."""
     if not flat.get("id"):
@@ -381,6 +422,8 @@ def gate_reason(flat: dict[str, Any]) -> str | None:
         return "excluded brand"
     if restricted(title):
         return "restricted category"
+    if is_component(title):
+        return "spare part / component"
     # rating/reviews/orders are enforced only when the source provides them (feed cards
     # may omit some; the feeds are curated topsellers/bestsellers, so absence is OK).
     rating = flat.get("rating")
@@ -623,12 +666,14 @@ def feed_names() -> list[str]:
 
 
 def niche_feeds(niche: str) -> list[str]:
-    """Feeds to source this niche from, restricted to feeds the app actually has."""
+    """Feeds to source from. Selection is appeal-driven, not niche-driven ("best product
+    wins"), so this returns the consumer-goods feeds the app actually has. The niche
+    argument is kept only for the history label."""
     available = set(feed_names())
-    chosen = [f for f in NICHE_FEEDS.get(niche, []) if not available or f in available]
+    chosen = [f for f in CONSUMER_FEEDS if not available or f in available]
     if not chosen:
         chosen = [f for f in FALLBACK_FEEDS if not available or f in available]
-    return chosen or NICHE_FEEDS.get(niche, []) or FALLBACK_FEEDS
+    return chosen or CONSUMER_FEEDS
 
 
 def discover(niche: str, page: int) -> list[dict[str, Any]]:
@@ -691,10 +736,12 @@ def source_products(
     history: list[dict[str, Any]],
     needed: int = 2,
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    """Page through this niche's DS feeds; prefilter candidates by the feed's price,
-    then fetch product detail (rating/reviews/orders) only for survivors, until
-    ``needed`` distinct products qualify. Returns (sources, notes)."""
+    """Build a pool of gate-passing candidates across the consumer feeds, rank the pool by
+    resale appeal (AI), and return the best ``needed`` as source records.
+    Falls back to deterministic order when the ranker is unavailable.
+    Returns (sources, notes)."""
     in_fixture = _load_fixture() is not None
+    pool_size = int(os.environ.get("ALI_POOL_SIZE", "40"))
     accepted: list[dict[str, Any]] = []
     accepted_views: list[dict[str, Any]] = []
     accepted_ids: set[str] = set()
@@ -702,8 +749,11 @@ def source_products(
     failed_gates = 0
     seen = 0
 
+    # Gather a pool first — appeal ranking needs choices, not the first two hits.
+    target = needed if in_fixture else max(needed, pool_size)
+
     def enough() -> bool:
-        return len(accepted) >= needed
+        return len(accepted) >= target
 
     feeds = ["fixture"] if in_fixture else niche_feeds(niche)
     max_pages = 1 if in_fixture else min(24, len(feeds) * 4)
@@ -752,9 +802,49 @@ def source_products(
         if in_fixture:
             break
 
-    if len(accepted) < needed:
-        notes.append(
-            f"niche='{niche}' feeds={feeds if not in_fixture else 'fixture'} "
-            f"seen={seen} failed_gates={failed_gates} accepted={len(accepted)}"
-        )
-    return accepted, notes
+    notes.append(
+        f"pool: seen={seen} failed_gates={failed_gates} candidates={len(accepted)} "
+        f"feeds={len(feeds)}"
+    )
+    selected = rank_pool(accepted, needed, notes)
+    if len(selected) < needed:
+        notes.append(f"selected {len(selected)} of {needed} requested")
+    return selected, notes
+
+
+def rank_pool(pool: list[dict[str, Any]], needed: int, notes: list[str]) -> list[dict[str, Any]]:
+    """Order the candidate pool by AI-scored resale appeal and keep the best ``needed``.
+    Any failure (no key, API error) falls back to the deterministic pool order."""
+    if len(pool) <= 1:
+        return pool[:needed]
+    try:
+        import openai_copy
+        import spend
+
+        by_id = {source["product_id"]: source for source in pool}
+        candidates = [
+            {
+                "id": source["product_id"],
+                "title": source.get("source_title", ""),
+                "price": (source.get("selected_variants") or [{}])[0].get("visible_item_price", ""),
+            }
+            for source in pool
+        ]
+        result = openai_copy.rank_candidates(candidates, top_n=needed)
+        tokens_in, tokens_out = result.get("usage", (0, 0))
+        spend.record(result.get("model", ""), tokens_in, tokens_out, purpose="ranking")
+        ordered: list[dict[str, Any]] = []
+        for entry in result.get("ranked", []):
+            source = by_id.get(entry["id"])
+            if source is None:
+                continue
+            source["appeal_score"] = entry["score"]
+            source["appeal_reason"] = entry["reason"]
+            notes.append(f"pick {entry['score']:.0f}/10 — {source.get('source_title','')[:60]} — {entry['reason'][:80]}")
+            ordered.append(source)
+        if ordered:
+            return ordered[:needed]
+        notes.append("ranker returned no usable picks; using deterministic order")
+    except Exception as exc:  # noqa: BLE001 - ranking is best-effort
+        notes.append(f"ranking unavailable ({exc}); using deterministic order")
+    return pool[:needed]

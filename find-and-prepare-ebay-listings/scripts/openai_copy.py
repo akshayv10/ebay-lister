@@ -77,6 +77,122 @@ class CopyError(RuntimeError):
     pass
 
 
+# What makes a product worth listing. Illustrative categories the user has had success
+# with, plus the general appeal traits — not an exhaustive list.
+RANKING_PROMPT = (
+    "You are a seasoned eBay reseller choosing which AliExpress products to list.\n"
+    "Score each candidate 0-10 for resale appeal to a US eBay buyer.\n\n"
+    "Score HIGH for products that are:\n"
+    "- gaming gear and accessories; superhero / comic / pop-culture themed items\n"
+    "- RC vehicles (cars, helicopters, planes), drones\n"
+    "- giftable impulse buys: novel, fun, cute or clever, instantly appealing in a photo\n"
+    "- practical problem-solvers: clever gadgets that fix an everyday annoyance\n"
+    "- trending or viral consumer products with social buzz\n"
+    "- home & lifestyle upgrades: decor, lighting, organisation that photographs well\n"
+    "(These are examples of what has worked, not an exhaustive list — reward anything a\n"
+    "browsing buyer would find genuinely cool, useful or giftable.)\n\n"
+    "Score 0-2 and never recommend:\n"
+    "- spare parts, replacement components, repair items (screws, fittings, connectors,\n"
+    "  cables, PCBs, keycaps, LCD/digitizer replacements, tubing, bearings)\n"
+    "- generic commodity hardware or anything only a technician would buy\n"
+    "- items whose purpose is unclear from the title\n\n"
+    "Return the best candidates in descending score order. Exclude anything scoring below 5."
+)
+
+RANKING_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["ranked"],
+    "properties": {
+        "ranked": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["id", "score", "reason"],
+                "properties": {
+                    "id": {"type": "string"},
+                    "score": {"type": "number"},
+                    "reason": {"type": "string"},
+                },
+            },
+        }
+    },
+}
+
+
+def _usage(payload: dict[str, Any]) -> tuple[int, int]:
+    usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+    return int(usage.get("input_tokens", 0) or 0), int(usage.get("output_tokens", 0) or 0)
+
+
+def _post(body: dict[str, Any], transport: Any | None) -> dict[str, Any]:
+    if transport is not None:
+        return transport(body)
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    request = urllib.request.Request(
+        "https://api.openai.com/v1/responses",
+        data=json.dumps(body).encode("utf-8"),
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=90) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        raise CopyError(f"OpenAI request failed: {exc}") from exc
+
+
+def rank_candidates(
+    candidates: list[dict[str, Any]],
+    top_n: int = 6,
+    transport: Any | None = None,
+) -> dict[str, Any]:
+    """Score candidates for resale appeal.
+
+    ``candidates`` are dicts with 'id', 'title' and optional 'price'. Returns
+    {'ranked': [{id, score, reason}], 'usage': (in, out), 'model': str} ordered best-first.
+    Raises CopyError so callers can fall back to deterministic order.
+    """
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key and transport is None:
+        raise CopyError("OPENAI_API_KEY is not set")
+    if not candidates:
+        raise CopyError("no candidates to rank")
+    model = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini").strip() or "gpt-4.1-mini"
+
+    listing = [
+        {"id": str(item.get("id", "")), "title": str(item.get("title", ""))[:200],
+         "price_usd": str(item.get("price", ""))}
+        for item in candidates
+    ]
+    body = {
+        "model": model,
+        "input": [
+            {"role": "system", "content": "You rank ecommerce products and reply with strict JSON."},
+            {"role": "user", "content": [{
+                "type": "input_text",
+                "text": RANKING_PROMPT
+                + f"\n\nReturn at most {top_n} candidates.\n\nCandidates:\n"
+                + json.dumps(listing, ensure_ascii=False),
+            }]},
+        ],
+        "text": {"format": {"type": "json_schema", "name": "ranked_products", "strict": False, "schema": RANKING_SCHEMA}},
+    }
+    payload = _post(body, transport)
+    try:
+        parsed = json.loads(_extract_text(payload))
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise CopyError(f"OpenAI returned unparseable ranking: {exc}") from exc
+    ranked = [
+        {"id": str(r.get("id", "")), "score": float(r.get("score", 0) or 0), "reason": str(r.get("reason", ""))}
+        for r in (parsed.get("ranked") or [])
+        if isinstance(r, dict) and str(r.get("id", ""))
+    ]
+    ranked.sort(key=lambda r: r["score"], reverse=True)
+    return {"ranked": ranked[:top_n], "usage": _usage(payload), "model": model}
+
+
 def _extract_text(payload: dict[str, Any]) -> str:
     if isinstance(payload.get("output_text"), str) and payload["output_text"].strip():
         return payload["output_text"]
@@ -121,21 +237,7 @@ def generate_listing(
         "text": {"format": {"type": "json_schema", "name": "ebay_listing", "strict": False, "schema": SCHEMA}},
     }
 
-    if transport is not None:
-        payload = transport(body)
-    else:
-        request = urllib.request.Request(
-            "https://api.openai.com/v1/responses",
-            data=json.dumps(body).encode("utf-8"),
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=90) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-        except Exception as exc:  # noqa: BLE001
-            raise CopyError(f"OpenAI request failed: {exc}") from exc
-
+    payload = _post(body, transport)
     try:
         listing = json.loads(_extract_text(payload))
     except (json.JSONDecodeError, TypeError) as exc:
@@ -151,4 +253,10 @@ def generate_listing(
         for k, v in (specifics_raw.items() if isinstance(specifics_raw, dict) else [])
         if str(k).strip() and str(v).strip()
     }
-    return {"title": title, "description": description, "item_specifics": item_specifics}
+    return {
+        "title": title,
+        "description": description,
+        "item_specifics": item_specifics,
+        "usage": _usage(payload),
+        "model": model,
+    }

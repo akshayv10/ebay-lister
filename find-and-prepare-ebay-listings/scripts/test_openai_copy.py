@@ -31,6 +31,24 @@ def test_generate_listing_parses_and_returns_specifics() -> None:
     assert result["item_specifics"]["Type"] == "USB Hub"
 
 
+def _fake_rank_transport(body):
+    ranked = {"ranked": [
+        {"id": "222", "score": 9, "reason": "RC drone, high gift appeal"},
+        {"id": "111", "score": 6, "reason": "practical organiser"},
+    ]}
+    return {"output_text": __import__("json").dumps(ranked), "usage": {"input_tokens": 900, "output_tokens": 120}}
+
+
+def test_rank_candidates_orders_by_score_and_reports_usage() -> None:
+    os.environ["OPENAI_API_KEY"] = "test-key"
+    result = openai_copy.rank_candidates(
+        [{"id": "111", "title": "Desk organiser"}, {"id": "222", "title": "RC drone 4K"}],
+        top_n=2, transport=_fake_rank_transport,
+    )
+    assert [r["id"] for r in result["ranked"]] == ["222", "111"]
+    assert result["usage"] == (900, 120)
+
+
 def test_missing_key_raises_copyerror() -> None:
     os.environ.pop("OPENAI_API_KEY", None)
     try:
