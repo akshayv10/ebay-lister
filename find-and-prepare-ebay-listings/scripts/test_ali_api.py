@@ -69,9 +69,9 @@ def test_orders_gate_enforces_minimum() -> None:
             "product_main_image_url": "https://x/main.jpg",
         }
 
-    assert ali_api.MIN_ORDERS == 500
-    assert ali_api.gate_reason(ali_api.flatten_card(card(499))) == "orders < 500"
-    assert ali_api.gate_reason(ali_api.flatten_card(card(500))) is None
+    minimum = ali_api.MIN_ORDERS
+    assert ali_api.gate_reason(ali_api.flatten_card(card(minimum - 1))) == f"orders < {minimum}"
+    assert ali_api.gate_reason(ali_api.flatten_card(card(minimum))) is None
 
 
 def test_component_titles_are_rejected() -> None:

@@ -96,14 +96,23 @@ Optional **Variables**: `RUN_TZ` (default `Asia/Kolkata`), `SMTP_HOST`, `SMTP_PO
 `OPENAI_MODEL` (default `gpt-4.1-mini`). Without `OPENAI_API_KEY` the listings still
 publish, using a plain template description instead of AI copy.
 
-### 6. Schedule
-Edit the `cron` in `.github/workflows/daily.yml` to your desired time **in UTC**
-(it currently runs 14:00 UTC). Manual workflow modes are:
+### 6. Running it (automation is currently PAUSED)
+There is **no schedule** — runs are manual only, and **publishing is opt-in**.
+**Actions → Run workflow**, then pick a mode:
 
-- `dry-run` (default): source and validate without eBay, email, or Sheets writes
+- `dry-run` (default): source and validate without eBay, email, or Sheets writes — **safe**
 - `sheet-sync-only`: create/repair `Auto Lister`, replay queued rows, and backfill history
 - `email-test`: send a harmless test message without creating a listing
-- `full`: run the production listing pipeline
+- `full`: run the production listing pipeline — **the only mode that creates listings**
+
+Extra guards:
+
+- Repository variable **`LIVE_LISTING=0`** hard-stops publishing regardless of mode.
+- Locally, `python3 daily_run.py` is always a dry run; only `--live` publishes.
+
+To enable the daily schedule later, uncomment the two `schedule` lines in
+`.github/workflows/daily.yml` and set the cron to your time **in UTC**. Scheduled runs
+already publish — they are included in the LIVE condition in the run step.
 
 ## Testing offline (no network, no eBay)
 
@@ -118,7 +127,7 @@ ALI_API_FIXTURE="$PWD/fixtures/ali_sample.json" \
 
 ## Tuning (environment variables)
 
-`ALI_MIN_RATING` (4.5), `ALI_MIN_REVIEWS` (25), `ALI_MIN_ORDERS` (500),
+`ALI_MIN_RATING` (4.5), `ALI_MIN_REVIEWS` (25), `ALI_MIN_ORDERS` (100),
 `ALI_MIN_PRICE_USD` (15), `ALI_USE_FREIGHT` (1), `ALI_SHIPPING_PCT` /
 `ALI_SHIPPING_FLAT` (delivered-cost estimate when freight lookup is unavailable),
 `ALI_DS_DISCOVERY` (auto|text|feed), `ALI_DS_FEED_NAME`.

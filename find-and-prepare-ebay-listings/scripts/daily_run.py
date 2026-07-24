@@ -168,13 +168,18 @@ def run(dry_run: bool) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    # Publishing is opt-in: a bare `python3 daily_run.py` must never create eBay listings,
+    # so testing can't accidentally go live.
+    parser.add_argument("--live", action="store_true",
+                        help="Actually publish to eBay. Without this, the run is a dry run.")
     parser.add_argument("--dry-run", action="store_true",
-                        help="Source and validate only; do not touch eBay or send email.")
+                        help="No-op (dry run is the default); kept for backwards compatibility.")
     parser.add_argument("--no-email", action="store_true", help="Do not send the email (still runs eBay).")
     args = parser.parse_args()
+    dry_run = not args.live
 
     try:
-        result = run(args.dry_run)
+        result = run(dry_run)
     except Exception as exc:  # noqa: BLE001 - top-level guard so we always email a failure
         result = {"date": _now().date().isoformat(), "status": "error",
                   "products": [], "listed_count": 0, "error": f"Unhandled error: {exc}"}
@@ -195,7 +200,7 @@ def main() -> int:
     except OSError:
         pass
 
-    if not args.dry_run and not args.no_email:
+    if not dry_run and not args.no_email:
         try:
             notify.send(result)
         except notify.NotifyError as exc:
@@ -203,9 +208,10 @@ def main() -> int:
 
     for note in (result.get("notes") or [])[:40]:
         print("NOTE:", note)
+    print("MODE:", "DRY RUN — nothing was listed" if dry_run else "LIVE — listings published")
     print(json.dumps({"status": result.get("status"), "listed": result.get("listed_count", 0),
                       "niche": result.get("niche", ""), "error": result.get("error", "")}))
-    return 0 if result.get("status") == "listed" else (0 if args.dry_run else 1)
+    return 0 if result.get("status") == "listed" else (0 if dry_run else 1)
 
 
 if __name__ == "__main__":

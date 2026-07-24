@@ -1,11 +1,17 @@
 name: Daily eBay auto-lister
 
-# Runs unattended in GitHub's cloud (your computer can be off).
-# NOTE: cron is in UTC and may start a few minutes late. Pick a UTC time that
-# matches the local time you want. Example: 14:00 UTC. Change the line below.
+# AUTOMATION IS PAUSED — manual runs only, on purpose.
+#
+# Publishing is opt-in: only mode "full" creates real eBay listings. Every other mode
+# (default "dry-run") sources and validates without listing, so testing can never list
+# by accident. Repository variable LIVE_LISTING=0 hard-stops publishing regardless of mode.
+#
+# To enable the daily schedule later, uncomment the two `schedule` lines and set the cron
+# to your desired time IN UTC (it may start a few minutes late; "0 14 * * *" is 14:00 UTC).
+# Scheduled runs publish — they are already included in the LIVE condition below.
 on:
-  schedule:
-    - cron: "0 14 * * *"
+  # schedule:
+  #   - cron: "0 14 * * *"
   workflow_dispatch:
     inputs:
       mode:
@@ -72,11 +78,20 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
-      - name: Run daily lister
+      # Publishing requires mode=full (or a scheduled run) AND LIVE_LISTING not being '0'.
+      # Anything else runs daily_run.py with no --live flag, which is a dry run.
+      - name: Run lister
         if: github.event_name == 'schedule' || inputs.mode == 'full' || inputs.mode == 'dry-run'
+        env:
+          LIVE: ${{ ((github.event_name == 'schedule' || inputs.mode == 'full') && vars.LIVE_LISTING != '0') && 'yes' || 'no' }}
         run: |
-          python find-and-prepare-ebay-listings/scripts/daily_run.py \
-            ${{ (github.event_name == 'workflow_dispatch' && inputs.mode == 'dry-run') && '--dry-run' || '' }}
+          if [ "$LIVE" = "yes" ]; then
+            echo "::warning::LIVE MODE — this run will publish real eBay listings."
+            python find-and-prepare-ebay-listings/scripts/daily_run.py --live
+          else
+            echo "DRY RUN — sourcing and validating only; nothing will be listed."
+            python find-and-prepare-ebay-listings/scripts/daily_run.py
+          fi
 
       - name: Backfill and sync Google Sheet
         if: github.event_name == 'workflow_dispatch' && inputs.mode == 'sheet-sync-only'
