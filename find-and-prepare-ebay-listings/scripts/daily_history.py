@@ -186,10 +186,15 @@ def upsert_history(path: Path, record: dict[str, Any], now: str | None = None) -
     return normalized
 
 
-def choose_niche(records: list[dict[str, Any]], today: date) -> str:
+def niche_priority(records: list[dict[str, Any]], today: date) -> list[str]:
+    """Rank all 5 niches for `today`, most preferred first. The top pick is what
+    `choose_niche` returns; the full order lets a run fall back to the next niche
+    when the preferred one sources 0 qualifying candidates — niche assignment is a
+    preference, not a hard daily lock, so any of the 5 may end up used on a given day."""
+    ordered: list[str] = []
     same_day = [record for record in records if record.get("local_calendar_date") == today.isoformat()]
     if same_day and same_day[-1].get("assigned_niche") in NICHES:
-        return str(same_day[-1]["assigned_niche"])
+        ordered.append(str(same_day[-1]["assigned_niche"]))
     start = today - timedelta(days=5)
     by_day: dict[date, set[str]] = {}
     for record in records:
@@ -206,13 +211,23 @@ def choose_niche(records: list[dict[str, Any]], today: date) -> str:
     complete = sorted(day for day, niches in by_day.items() if len(niches) == 1)
     if complete == expected:
         latest = next(iter(by_day[complete[-1]]))
-        return NICHES[(NICHES.index(latest) + 1) % len(NICHES)]
-    last_used: dict[str, date | None] = {niche: None for niche in NICHES}
-    for day, niches in by_day.items():
-        for niche in niches:
-            if last_used[niche] is None or day > last_used[niche]:
-                last_used[niche] = day
-    return min(NICHES, key=lambda niche: (last_used[niche] or date.min, NICHES.index(niche)))
+        start_index = (NICHES.index(latest) + 1) % len(NICHES)
+        rest = [NICHES[(start_index + offset) % len(NICHES)] for offset in range(len(NICHES))]
+    else:
+        last_used: dict[str, date | None] = {niche: None for niche in NICHES}
+        for day, niches in by_day.items():
+            for niche in niches:
+                if last_used[niche] is None or day > last_used[niche]:
+                    last_used[niche] = day
+        rest = sorted(NICHES, key=lambda niche: (last_used[niche] or date.min, NICHES.index(niche)))
+    for niche in rest:
+        if niche not in ordered:
+            ordered.append(niche)
+    return ordered
+
+
+def choose_niche(records: list[dict[str, Any]], today: date) -> str:
+    return niche_priority(records, today)[0]
 
 
 def main() -> int:

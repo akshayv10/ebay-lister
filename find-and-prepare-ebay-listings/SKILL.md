@@ -44,7 +44,7 @@ Do not source products until Production OAuth, compatible EBAY_US business polic
 
 Read [references/daily-sourcing.md](references/daily-sourcing.md). Create `ebay-listing-runs/<timestamp>/` with `candidate-ledger.jsonl`, `run-budget.json`, and one product directory per accepted product. Initialize and persist browser budgets with `run_budget.py`.
 
-Apply gates in this order: search card; rating/reviews/sales/US availability and brand risk; history duplication; selected-variant visible price; eBay sold-listings demand; read-only checkout pricing. Record acceptance at `visible_price` when the selected single-unit price is at least USD 15. Require a positive delivered total before initializing a listing. Never purchase.
+Apply gates in this order: search card; rating/reviews/sales/US availability and brand risk; history duplication; selected-variant visible price; eBay sold-listings demand; read-only checkout pricing. Record acceptance at `visible_price` when the selected single-unit price is at least USD 10. Require a positive delivered total before initializing a listing. Never purchase.
 
 Capture only verified facts needed by [references/handoff-schema.md](references/handoff-schema.md): factual copy inputs, Brand, item specifics, 1–24 HTTPS images for a single-variation item or at most 12 for a variation group, and 1–4 real selected combinations. Generate factual title and description from this evidence without directly calling the OpenAI API. Run `listing_job.py init` for each source. Both results must exist before any eBay mutation.
 

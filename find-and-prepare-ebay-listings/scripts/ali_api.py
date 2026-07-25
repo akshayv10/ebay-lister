@@ -65,7 +65,7 @@ MIN_ORDERS = int(os.environ.get("ALI_MIN_ORDERS", "250"))
 # Free eBay Browse API saturation proxy (no sold-item data available without the
 # limited-release Marketplace Insights API — see module docstring).
 MAX_ACTIVE_LISTINGS = int(os.environ.get("ALI_MAX_ACTIVE_LISTINGS", "500"))
-MIN_PRICE_USD = Decimal(os.environ.get("ALI_MIN_PRICE_USD", "15"))
+MIN_PRICE_USD = Decimal(os.environ.get("ALI_MIN_PRICE_USD", "10"))
 # Delivered-cost estimate used only when freight lookup is unavailable/failed.
 SHIP_PCT = Decimal(os.environ.get("ALI_SHIPPING_PCT", "0"))
 SHIP_FLAT = Decimal(os.environ.get("ALI_SHIPPING_FLAT", "0"))
@@ -1027,7 +1027,7 @@ def source_products(
             "(orders + approximate rating); the review-count gate is skipped. Mint a token "
             "with mint_ali_token.py and set the ALIEXPRESS_ACCESS_TOKEN secret to enforce it."
         )
-    max_pages = 1 if in_fixture else min(24, len(feeds) * 4)
+    max_pages = 1 if in_fixture else min(60, len(feeds) * 12)
     consecutive_empty = 0
     for page in range(1, max_pages + 1):
         if enough():

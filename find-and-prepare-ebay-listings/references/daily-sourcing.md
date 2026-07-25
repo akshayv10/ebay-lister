@@ -14,7 +14,7 @@
 
 - Find exactly two functionally distinct products from one niche.
 - Use eBay US Sold Items to discover what to search for, AliExpress for sourcing the supplier match, and eBay US again for duplicate inventory checks, demand confirmation (see eBay demand confirmation), and preparing unpublished API offers.
-- Allow unbranded products and lesser-known Chinese or non-global brands. Require US delivery region, rating at least 4.5, at least 50 reviews every run, at least 250 orders/sales, and a visible selected-variant single-unit item price of at least USD 15. Checkout cost is a downstream pricing input, not a viability gate.
+- Allow unbranded products and lesser-known Chinese or non-global brands. Require US delivery region, rating at least 4.5, at least 50 reviews every run, at least 250 orders/sales, and a visible selected-variant single-unit item price of at least USD 10. Checkout cost is a downstream pricing input, not a viability gate.
 - Reject ingestibles, medical claims, restricted goods, dangerous electrical products, counterfeits, franchise or licensed identities, and avoidable fitment dependence.
 - Use `/Users/akballer47/Documents/Codex/resale-product-history.jsonl` and `Asia/Kolkata`.
 
@@ -58,7 +58,7 @@ Use this order so rejected candidates are inexpensive:
 1. Prefilter a batch of search cards without opening obviously ineligible products.
 2. On the product page, verify rating, at least 50 reviews, at least 250 sales, US availability, and allowed brand classification using only the compact top product panel plus specifications when necessary.
 3. Check the once-per-run inventory/history exclusion set.
-4. Select the exact single-unit variant and verify its ordinary visible item price is at least USD 15, excluding bulk tiers, coupons, coins, credits, and rewards.
+4. Select the exact single-unit variant and verify its ordinary visible item price is at least USD 10, excluding bulk tiers, coupons, coins, credits, and rewards.
 5. When the visible price passes, record the candidate as accepted at gate `visible_price`.
 6. Confirm this specific candidate still matches the eBay-first query discovery gate below before proceeding. Record the outcome at gate `ebay_demand`.
 7. Click Buy Now only to capture a positive delivered cost for deterministic eBay pricing and record that evidence at gate `checkout_pricing`.
@@ -77,9 +77,9 @@ For every finalist capture:
 - eBay sold count, most recent sold date, and active competing listing count from eBay demand confirmation;
 - material risk.
 
-Select a combination and record its ordinary visible single-unit item price first. If it is below USD 15, reject without clicking Buy Now. Once it passes the visible-price gate, run eBay demand confirmation below before Buy Now. Then click Buy Now only to reach read-only checkout review and record the positive delivered cost after automatic discounts, shipping, taxes, and import charges for eBay pricing. Do not apply coupons, coins, credits, rewards, or change address/payment settings. Never click a purchase control.
+Select a combination and record its ordinary visible single-unit item price first. If it is below USD 10, reject without clicking Buy Now. Once it passes the visible-price gate, run eBay demand confirmation below before Buy Now. Then click Buy Now only to reach read-only checkout review and record the positive delivered cost after automatic discounts, shipping, taxes, and import charges for eBay pricing. Do not apply coupons, coins, credits, rewards, or change address/payment settings. Never click a purchase control.
 
-Reject and replace when required viability evidence is missing, the visible price is below USD 15, an established global brand or counterfeit/trademark risk is present, inventory/history overlaps, or the product fails eBay demand confirmation. Do not reject because checkout is blocked or because its total is below USD 15. If checkout cannot provide a positive delivered cost, preserve the accepted candidate and pause before `source.json` initialization with a `checkout_pricing` blocker. Do not reject solely because a lesser-known brand is present. Never relax a threshold or switch niches to fill the second slot. Never treat an exhausted query, search page, or initial set of subcategories as a sourcing failure: keep broadening queries and exploring functionally relevant subcategories within the assigned niche until two products qualify. Pause only for an explicit external blocker named in the main skill contract, preserving the run for resumption.
+Reject and replace when required viability evidence is missing, the visible price is below USD 10, an established global brand or counterfeit/trademark risk is present, inventory/history overlaps, or the product fails eBay demand confirmation. Do not reject because checkout is blocked or because its total is below USD 10. If checkout cannot provide a positive delivered cost, preserve the accepted candidate and pause before `source.json` initialization with a `checkout_pricing` blocker. Do not reject solely because a lesser-known brand is present. Never relax a threshold or switch niches to fill the second slot. Never treat an exhausted query, search page, or initial set of subcategories as a sourcing failure: keep broadening queries and exploring functionally relevant subcategories within the assigned niche until two products qualify. Pause only for an explicit external blocker named in the main skill contract, preserving the run for resumption.
 
 Maintain `candidate-ledger.jsonl` through `scripts/candidate_ledger.py`. Record every accepted or rejected candidate with its first terminal gate and every search-result batch with a stable key and productive/exhausted outcome. Use it to skip every previously evaluated URL and batch. Reuse one candidate tab, scan cards in batches, and move forward after an unproductive page or query; persistence must broaden the search rather than repeat it.
 

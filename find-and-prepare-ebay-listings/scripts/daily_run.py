@@ -25,7 +25,7 @@ from zoneinfo import ZoneInfo
 
 import ali_api
 import notify
-from daily_history import choose_niche, load_history
+from daily_history import load_history, niche_priority
 from listing_job import normalize_source
 from ebay_common import EbayError, read_json, write_json
 
@@ -99,21 +99,37 @@ def run(dry_run: bool) -> dict[str, Any]:
     local_date = now.date().isoformat()
     run_stamp = now.strftime("%Y%m%dT%H%M%S")
     history = load_history(HISTORY_PATH)
-    niche = choose_niche(history, now.date())
+    niche_order = niche_priority(history, now.date())
     run_dir = RUNS_DIR / run_stamp
     pool = int(os.environ.get("ALI_SOURCE_POOL", "6"))
 
     result: dict[str, Any] = {
-        "date": local_date, "niche": niche, "run_stamp": run_stamp,
+        "date": local_date, "niche": niche_order[0], "run_stamp": run_stamp,
         "status": "error", "products": [], "listed_count": 0, "notes": [],
     }
 
-    # Over-source a small pool so one bad candidate doesn't sink the day.
-    sources, notes = ali_api.source_products(niche, run_stamp, local_date, history, needed=pool)
-    result["notes"] = list(notes)
+    # Niche assignment is a preference, not a hard daily lock: over-source a small pool
+    # per niche, and if the preferred niche's feed sources 0 qualifying candidates, fall
+    # back to the next niche in priority order rather than failing the whole run.
+    notes: list[str] = []
+    sources: list[dict[str, Any]] = []
+    niche = niche_order[0]
+    for candidate_niche in niche_order:
+        niche = candidate_niche
+        candidate_sources, candidate_notes = ali_api.source_products(
+            candidate_niche, run_stamp, local_date, history, needed=pool
+        )
+        notes += [f"[{candidate_niche}] {note}" for note in candidate_notes]
+        if candidate_sources:
+            sources = candidate_sources
+            break
+        notes.append(f"niche '{candidate_niche}' sourced 0 candidates — trying next niche")
+
+    result["niche"] = niche
+    result["notes"] = notes
 
     if not sources:
-        result["error"] = f"Sourced 0 qualifying products for niche '{niche}'."
+        result["error"] = f"Sourced 0 qualifying products across all {len(niche_order)} niches."
         return result
 
     write_sources(run_dir, sources)
