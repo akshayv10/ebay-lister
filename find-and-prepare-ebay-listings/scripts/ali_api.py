@@ -110,7 +110,11 @@ NICHE_FEEDS: dict[str, list[str]] = {
     ],
 }
 # General fallback feeds if a niche's feeds return nothing usable.
-FALLBACK_FEEDS = ["AEB_Droplo_BestsellersItems_20241016", "AEB_i69_FullCategory_TopSellers_20241225"]
+# The full-category TopSellers feed used to be a fallback here, but it surfaced off-niche
+# bestsellers (bare electronics, PC/networking parts, FPV/airsoft gear) when a niche's own
+# feeds ran thin, so it was removed. Only the lighter Droplo bestsellers fallback remains,
+# and its off-niche items are now caught by the category + electronics gates below.
+FALLBACK_FEEDS = ["AEB_Droplo_BestsellersItems_20241016"]
 
 # Spare parts / components / repair items. Free deterministic filter that runs before any
 # AI call — these are what produced the "12pcs watercooling fittings" listing.
@@ -150,6 +154,37 @@ DEVICE_EXCLUSIONS = {
     "smartphone", "cell phone", "cellphone", " gsm ", "rugged phone", "feature phone",
     "android phone", "mobile phone", "smart watch", "smartwatch", "tablet pc",
     "laptop computer", "game console", "drone with camera",
+}
+
+# Bare electronics / internal hobby-electronics that make poor consumer listings. Casefolded
+# substring match on the space-padded title (like COMPONENT_TERMS), so short/ambiguous terms
+# are space-wrapped to match only as whole words. Note: a finished consumer drone is still
+# allowed — only drone/FPV *parts* are blocked here.
+ELECTRONICS_TERMS = {
+    # thermal / PC-build parts
+    "thermal grease", "thermal paste", "thermal compound",
+    # networking / PC internals
+    "ethernet switch", "network switch", "rj45", "poe switch", " router ", "modem",
+    "graphics card", "power supply unit", "motherboard", "ssd", " ram ", "cpu cooler",
+    # RC / FPV / drone parts
+    " vtx ", " fpv ", " esc ", "flight controller", "receiver module",
+    "transmitter module", "brushless motor",
+    # airsoft / blaster internals
+    "trigger unit", "airsoft", "gel blaster", "gearbox",
+    # hobby electronics / dev boards
+    "arduino", "raspberry pi", "esp32", "esp8266", "microcontroller",
+    "development board", "sensor module", "relay module", "voltage regulator",
+    "buck converter",
+}
+
+# AliExpress FIRST-LEVEL category names that are off-niche for every target niche. Matched
+# by exact (normalized) equality against the card's top-level category only — NOT a loose
+# substring — so a second-level like "Beauty Tools" under "Beauty & Health" is never caught.
+# Deliberately narrow: excludes "Computer & Office" (the Smartphone Accessories niche sources
+# legit accessories from a computer-accessories feed) and "Tools" (overlaps Home Improvement);
+# the specific bad items in those categories are caught by ELECTRONICS_TERMS instead.
+BLOCKED_CATEGORIES = {
+    "electronic components & supplies", "security & protection",
 }
 
 
@@ -498,6 +533,9 @@ def flatten_card(card: dict[str, Any]) -> dict[str, Any]:
         images.append(_https(url))
     seen: set[str] = set()
     unique = [u for u in images if u.startswith("https://") and not (u in seen or seen.add(u))]
+    # Top-level category only — the off-niche electronics gate matches it exactly, so a
+    # second-level like "Beauty Tools" must not leak into the value.
+    category = _first_str(card.get("first_level_category_name"))
     return {
         "id": pid_match.group(0) if pid_match else "",
         "title": _first_str(card.get("product_title") or card.get("title") or card.get("subject")),
@@ -506,6 +544,7 @@ def flatten_card(card: dict[str, Any]) -> dict[str, Any]:
         "orders": orders,
         "price": price,
         "sku_id": "",
+        "category": category,  # feed category, for the off-niche electronics gate
         "images": unique[:MAX_IMAGES],
     }
 
@@ -553,6 +592,21 @@ def is_component(title: str) -> bool:
     return any(term in lowered for term in COMPONENT_TERMS)
 
 
+def is_bare_electronics(title: str) -> bool:
+    """True for bare/internal electronics (PC parts, networking, FPV/drone or airsoft
+    internals, dev boards) that make poor consumer listings."""
+    lowered = f" {title.casefold()} "
+    return any(term in lowered for term in ELECTRONICS_TERMS)
+
+
+def category_blocked(category: str) -> bool:
+    """True when the AliExpress first-level category is an off-niche electronics/parts one.
+    Exact (whitespace-normalized) match, so second-level names like "Beauty Tools" that merely
+    contain a blocked word are never caught."""
+    lowered = re.sub(r"\s+", " ", (category or "").casefold()).strip()
+    return lowered in BLOCKED_CATEGORIES
+
+
 def gate_reason(flat: dict[str, Any]) -> str | None:
     """None if the flat detail passes every gate, else a short failure reason."""
     if not flat.get("id"):
@@ -566,6 +620,10 @@ def gate_reason(flat: dict[str, Any]) -> str | None:
         return "restricted category"
     if is_component(title):
         return "spare part / component"
+    if is_bare_electronics(title):
+        return "bare electronics"
+    if category_blocked(flat.get("category", "")):
+        return "blocked category"
     # rating/reviews/orders are enforced only when the source provides them (feed cards
     # may omit some; the feeds are curated topsellers/bestsellers, so absence is OK).
     rating = flat.get("rating")
