@@ -1,0 +1,168 @@
+name: Resale product handoff
+run-name: Resale handoff / ${{ inputs.operation }} / ${{ inputs.batch_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: "prepare, publish, or reconcile an exact reviewed batch"
+        type: choice
+        options:
+          - prepare
+          - publish
+          - reconcile
+        required: true
+      batch_id:
+        description: "Deterministic find-resale-products batch ID"
+        type: string
+        required: true
+      batch_payload_b64:
+        description: "Base64 JSON payload; required only for prepare"
+        type: string
+        required: false
+      prepared_actions_run_id:
+        description: "Actions run containing the prepared artifact; required for publish/reconcile"
+        type: string
+        required: false
+      confirm_run_id:
+        description: "Exact logical run ID approved for publish"
+        type: string
+        required: false
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: resale-product-handoff
+  cancel-in-progress: false
+
+jobs:
+  handoff:
+    runs-on: ubuntu-latest
+    env:
+      EBAY_ACCOUNT_CONFIG: ebay-account.json
+      HISTORY_PATH: state/resale-product-history.jsonl
+      RUN_TZ: ${{ vars.RUN_TZ || 'Asia/Kolkata' }}
+      ALI_DEBUG: ${{ vars.ALI_DEBUG || '0' }}
+      EBAY_AUTOFILL_REQUIRED_ASPECTS: "1"
+      EBAY_CLIENT_ID: ${{ secrets.EBAY_CLIENT_ID }}
+      EBAY_CLIENT_SECRET: ${{ secrets.EBAY_CLIENT_SECRET }}
+      EBAY_RUNAME: ${{ secrets.EBAY_RUNAME }}
+      EBAY_REFRESH_TOKEN: ${{ secrets.EBAY_REFRESH_TOKEN }}
+      ALIEXPRESS_APP_KEY: ${{ secrets.ALIEXPRESS_APP_KEY }}
+      ALIEXPRESS_APP_SECRET: ${{ secrets.ALIEXPRESS_APP_SECRET }}
+      ALIEXPRESS_TRACKING_ID: ${{ secrets.ALIEXPRESS_TRACKING_ID }}
+      ALIEXPRESS_ACCESS_TOKEN: ${{ secrets.ALIEXPRESS_ACCESS_TOKEN }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4.1-mini' }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Validate operation inputs
+        env:
+          OPERATION: ${{ inputs.operation }}
+          BATCH_ID: ${{ inputs.batch_id }}
+          PAYLOAD: ${{ inputs.batch_payload_b64 }}
+          PREPARE_RUN: ${{ inputs.prepared_actions_run_id }}
+          CONFIRM_RUN: ${{ inputs.confirm_run_id }}
+        run: |
+          case "$OPERATION" in
+            prepare)
+              test -n "$BATCH_ID" && test -n "$PAYLOAD"
+              ;;
+            publish|reconcile)
+              test -n "$BATCH_ID" && test -n "$PREPARE_RUN" && test -n "$CONFIRM_RUN"
+              test "$BATCH_ID" = "$CONFIRM_RUN"
+              ;;
+            *)
+              exit 2
+              ;;
+          esac
+
+      - name: Build strict handoff sources
+        if: inputs.operation == 'prepare'
+        env:
+          HANDOFF_PAYLOAD_B64: ${{ inputs.batch_payload_b64 }}
+        run: |
+          python find-and-prepare-ebay-listings/scripts/handoff_batch.py \
+            --run-dir "ebay-listing-runs/${{ inputs.batch_id }}"
+
+      - name: Prepare unpublished offers independently
+        if: inputs.operation == 'prepare'
+        run: |
+          python find-and-prepare-ebay-listings/scripts/ebay_listing.py prepare-independent \
+            --run-dir "ebay-listing-runs/${{ inputs.batch_id }}"
+          cat "ebay-listing-runs/${{ inputs.batch_id }}/review.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload prepared review
+        if: always() && inputs.operation == 'prepare'
+        uses: actions/upload-artifact@v4
+        with:
+          name: prepared-${{ inputs.batch_id }}
+          path: ebay-listing-runs/${{ inputs.batch_id }}
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Download exact prepared review
+        if: inputs.operation == 'publish' || inputs.operation == 'reconcile'
+        uses: actions/download-artifact@v4
+        with:
+          name: prepared-${{ inputs.confirm_run_id }}
+          path: prepared-run
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.prepared_actions_run_id }}
+
+      - name: Verify downloaded run identity
+        if: inputs.operation == 'publish' || inputs.operation == 'reconcile'
+        env:
+          CONFIRM_RUN: ${{ inputs.confirm_run_id }}
+        run: |
+          python -c 'import json, os, pathlib, sys; p=json.loads(pathlib.Path("prepared-run/run-result.json").read_text()); sys.exit(0 if p.get("run_id") == os.environ["CONFIRM_RUN"] else 2)'
+
+      - name: Publish approved products independently
+        if: inputs.operation == 'publish'
+        run: |
+          python find-and-prepare-ebay-listings/scripts/ebay_listing.py publish-independent \
+            --run-dir prepared-run \
+            --confirm-run-id "${{ inputs.confirm_run_id }}" \
+            --history state/resale-product-history.jsonl
+
+      - name: Reconcile prepared offers read-only
+        if: inputs.operation == 'reconcile'
+        run: |
+          python find-and-prepare-ebay-listings/scripts/ebay_listing.py reconcile \
+            --run-dir prepared-run \
+            --output prepared-run/reconcile.json
+
+      - name: Upload publication or reconciliation result
+        if: always() && (inputs.operation == 'publish' || inputs.operation == 'reconcile')
+        uses: actions/upload-artifact@v4
+        with:
+          name: result-${{ inputs.batch_id }}-${{ github.run_id }}
+          path: prepared-run
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Persist successful listing history
+        if: always() && inputs.operation == 'publish'
+        run: |
+          mkdir -p state
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > state/last-run.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add state
+          if git diff --cached --quiet; then
+            echo "No successful listing history changes to commit."
+          else
+            git commit -m "record resale handoff ${{ inputs.batch_id }}"
+            git push
+          fi
