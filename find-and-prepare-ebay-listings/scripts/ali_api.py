@@ -51,8 +51,8 @@ USE_FREIGHT = os.environ.get("ALI_USE_FREIGHT", "1").strip().lower() in {"1", "t
 # provides a real star rating and review count, so these gates are exact (unlike the
 # Affiliate API, which could only approximate them).
 MIN_RATING = float(os.environ.get("ALI_MIN_RATING", "4.5"))
-MIN_REVIEWS = int(os.environ.get("ALI_MIN_REVIEWS", "25"))
-MIN_ORDERS = int(os.environ.get("ALI_MIN_ORDERS", "100"))
+MIN_REVIEWS = int(os.environ.get("ALI_MIN_REVIEWS", "50"))
+MIN_ORDERS = int(os.environ.get("ALI_MIN_ORDERS", "250"))
 MIN_PRICE_USD = Decimal(os.environ.get("ALI_MIN_PRICE_USD", "15"))
 # Delivered-cost estimate used only when freight lookup is unavailable/failed.
 SHIP_PCT = Decimal(os.environ.get("ALI_SHIPPING_PCT", "0"))
@@ -926,6 +926,14 @@ def source_products(
         return len(accepted) >= target
 
     feeds = ["fixture"] if in_fixture else niche_feeds(niche)
+    # Review count + authoritative rating come from ds.product.get, which needs a seller
+    # token. Without it, every feed candidate fails the enrichment step and nothing lists.
+    if not in_fixture and not access_token():
+        notes.append(
+            "WARNING: ALIEXPRESS_ACCESS_TOKEN is not set — review/rating cannot be "
+            "verified, so every candidate will be rejected. Mint a token with "
+            "mint_ali_token.py and set the ALIEXPRESS_ACCESS_TOKEN secret."
+        )
     max_pages = 1 if in_fixture else min(24, len(feeds) * 4)
     consecutive_empty = 0
     for page in range(1, max_pages + 1):
@@ -947,7 +955,7 @@ def source_products(
                 break
             seen += 1
             try:
-                # Gate on the feed's own fields (no product.get: it needs a seller token).
+                # First gate on the feed's own fields — free (brand/component/price/orders).
                 flat = flatten_card(card)
                 product_id = flat.get("id", "")
                 if not product_id or product_id in accepted_ids:
@@ -962,6 +970,24 @@ def source_products(
                 }
                 if _duplicate(view, history, accepted_views):
                     continue
+                # Feed cards omit the review count (flat["reviews"] is None). Fetch the
+                # authoritative rating + review count via ds.product.get so those gates are
+                # enforced for real, then re-gate. A failed/absent detail call (e.g. no
+                # seller token) means the criteria can't be verified — reject the candidate.
+                if flat.get("reviews") is None:
+                    detail = get_product_detail(product_id)
+                    enriched = flatten_detail(detail)
+                    # Take the authoritative rating + review count unconditionally. A
+                    # missing detail rating comes back as 0.0 (and reviews as 0), so it
+                    # must fail the gate rather than fall back to the feed's approximate
+                    # rating — an unverified rating can't be allowed to pass MIN_RATING.
+                    flat["reviews"] = enriched.get("reviews")
+                    flat["rating"] = enriched.get("rating")
+                    reason = gate_reason(flat)
+                    if reason is not None:
+                        failed_gates += 1
+                        notes.append(f"[detail-gate {product_id}] {reason}")
+                        continue
                 source = product_to_source(flat, niche, run_stamp, local_date)
             except AliError as exc:
                 notes.append(f"[card] {exc}")

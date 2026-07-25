@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Safety tests: a run must never publish to eBay unless --live is passed explicitly.
+"""Safety tests for the publish path.
 
-A test run once published a real listing because publishing was the default. These tests
-lock the safe default in place.
+The daily_run.py entrypoint stays dry unless --live is passed explicitly, and the
+automation schedule stays paused. By design, the workflow now defaults its manual mode to
+"full" (publishing) and lets mode alone decide — there is no separate LIVE_LISTING kill
+switch. These tests lock that intended behavior in place.
 """
 
 from __future__ import annotations
@@ -37,25 +39,27 @@ def test_workflow_has_no_active_schedule() -> None:
     assert not active_schedule, f"automation must stay paused, found: {active_schedule}"
 
 
-def test_workflow_defaults_to_a_safe_mode() -> None:
-    """The manual run mode must default to dry-run, so 'Run workflow' can't list."""
+def test_workflow_defaults_to_full_mode() -> None:
+    """The manual run mode defaults to 'full' so 'Run workflow' publishes by default."""
     text = WORKFLOW.read_text(encoding="utf-8")
     assert "mode:" in text, "workflow needs a 'mode' input"
     block = text.split("mode:", 1)[1][:400]
-    assert "default: dry-run" in block, "mode must default to dry-run"
+    assert "default: full" in block, "mode must default to full"
+    assert "dry-run" in block, "dry-run must remain available as an option"
 
 
-def test_workflow_publishes_only_in_full_mode() -> None:
+def test_workflow_publishes_only_in_full_or_scheduled_mode() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
     assert "--live" in text, "workflow must pass --live to publish"
     live_line = next(line for line in text.splitlines() if line.strip().startswith("LIVE:"))
-    assert "inputs.mode == 'full'" in live_line, "only mode=full may publish"
-    assert "LIVE_LISTING" in live_line, "the kill switch must gate the LIVE decision"
+    assert "inputs.mode == 'full'" in live_line, "mode=full drives the LIVE decision"
+    assert "github.event_name == 'schedule'" in live_line, "scheduled runs publish too"
 
 
-def test_workflow_has_kill_switch() -> None:
+def test_workflow_has_no_kill_switch() -> None:
+    """The LIVE_LISTING kill switch was removed on purpose; mode alone decides."""
     text = WORKFLOW.read_text(encoding="utf-8")
-    assert "LIVE_LISTING" in text, "a LIVE_LISTING kill switch must exist"
+    assert "LIVE_LISTING" not in text, "LIVE_LISTING kill switch must not return"
 
 
 def _run_all() -> int:

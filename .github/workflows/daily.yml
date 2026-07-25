@@ -2,9 +2,9 @@ name: Daily eBay auto-lister
 
 # AUTOMATION IS PAUSED — manual runs only, on purpose.
 #
-# Publishing is opt-in: only mode "full" creates real eBay listings. Every other mode
-# (default "dry-run") sources and validates without listing, so testing can never list
-# by accident. Repository variable LIVE_LISTING=0 hard-stops publishing regardless of mode.
+# Publishing is the default: mode "full" (the default) creates real eBay listings.
+# Pick "dry-run" to source and validate without listing anything. Mode alone decides
+# publishing — there is no separate kill switch.
 #
 # To enable the daily schedule later, uncomment the two `schedule` lines and set the cron
 # to your desired time IN UTC (it may start a few minutes late; "0 14 * * *" is 14:00 UTC).
@@ -15,14 +15,14 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "Safe manual operation"
+        description: "Operation mode (only one)"
         type: choice
         options:
-          - dry-run
+          - full            # publishes real eBay listings (default)
+          - dry-run         # source + validate only, list nothing
           - sheet-sync-only
           - email-test
-          - full
-        default: dry-run
+        default: full
 
 permissions:
   contents: write   # allows committing updated history back to the repo
@@ -54,8 +54,9 @@ jobs:
       ALIEXPRESS_APP_KEY: ${{ secrets.ALIEXPRESS_APP_KEY }}
       ALIEXPRESS_APP_SECRET: ${{ secrets.ALIEXPRESS_APP_SECRET }}
       ALIEXPRESS_TRACKING_ID: ${{ secrets.ALIEXPRESS_TRACKING_ID }}
-      # Seller token for ds.product.get (variants) + freight. Without it, listings are
-      # single-variation. Re-mint with mint_ali_token.py when it expires.
+      # Seller token for ds.product.get (review count + authoritative rating, variants) +
+      # freight. Required for the daily run: without it review/rating can't be verified, so
+      # the sourcing pool is always empty. Re-mint with mint_ali_token.py when it expires.
       ALIEXPRESS_ACCESS_TOKEN: ${{ secrets.ALIEXPRESS_ACCESS_TOKEN }}
       # --- OpenAI (eBay copy) ---
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -78,12 +79,12 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
-      # Publishing requires mode=full (or a scheduled run) AND LIVE_LISTING not being '0'.
-      # Anything else runs daily_run.py with no --live flag, which is a dry run.
+      # Publishing happens on mode=full (the default) or a scheduled run. Any other mode
+      # runs daily_run.py with no --live flag, which is a dry run.
       - name: Run lister
         if: github.event_name == 'schedule' || inputs.mode == 'full' || inputs.mode == 'dry-run'
         env:
-          LIVE: ${{ ((github.event_name == 'schedule' || inputs.mode == 'full') && vars.LIVE_LISTING != '0') && 'yes' || 'no' }}
+          LIVE: ${{ (github.event_name == 'schedule' || inputs.mode == 'full') && 'yes' || 'no' }}
         run: |
           if [ "$LIVE" = "yes" ]; then
             echo "::warning::LIVE MODE — this run will publish real eBay listings."

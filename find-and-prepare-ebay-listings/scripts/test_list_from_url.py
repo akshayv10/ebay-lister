@@ -41,7 +41,7 @@ def test_url_parsing_rejects_non_aliexpress() -> None:
 
 def test_enforce_gates_flag() -> None:
     failing = ali_api.flatten_detail(_details()[3])  # reviews < 25
-    assert ali_api.gate_reason(failing) == "reviews < 25"
+    assert ali_api.gate_reason(failing) == f"reviews < {ali_api.MIN_REVIEWS}"
     # Default (daily run) still raises on a gate failure.
     try:
         ali_api.product_to_source(failing, "n", "20260101T000000", "2026-01-01")
@@ -63,7 +63,7 @@ def test_build_source_reports_gate_warning() -> None:
             "https://www.aliexpress.us/item/1005006000000004.html", "20260101T000000", "2026-01-01")
     finally:
         ali_api.get_product_detail = orig
-    assert warning == "reviews < 25"
+    assert warning == f"reviews < {ali_api.MIN_REVIEWS}"
     assert source["listing_title"]
 
 

@@ -94,24 +94,28 @@ Push this repo (private), then add **Settings → Secrets and variables → Acti
 | `NOTIFY_FROM` | usually same as `SMTP_USER` |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | complete service-account key JSON |
 | `OPENAI_API_KEY` | OpenAI key for AI-written eBay title/description/specifics (gpt-4.1-mini) |
-| `ALIEXPRESS_ACCESS_TOKEN` | Seller token for variants (`ds.product.get`) + per-SKU freight. Mint with `mint_ali_token.py`. Optional — without it listings are single-variation. |
+| `ALIEXPRESS_ACCESS_TOKEN` | Seller token for `ds.product.get` (review count + authoritative rating, variants) + per-SKU freight. Mint with `mint_ali_token.py`. **Required for the daily run** — without it the review/rating gates can't be verified, so every candidate is rejected and nothing lists. |
 
 Optional **Variables**: `RUN_TZ` (default `Asia/Kolkata`), `SMTP_HOST`, `SMTP_PORT`,
 `OPENAI_MODEL` (default `gpt-4.1-mini`). Without `OPENAI_API_KEY` the listings still
 publish, using a plain template description instead of AI copy.
 
 ### 6. Running it (automation is currently PAUSED)
-There is **no schedule** — runs are manual only, and **publishing is opt-in**.
-**Actions → Run workflow**, then pick a mode:
+There is **no schedule** — runs are manual only. **Actions → Run workflow**, then pick a
+mode (the default publishes):
 
-- `dry-run` (default): source and validate without eBay, email, or Sheets writes — **safe**
+- `full` (default): run the production listing pipeline — **publishes real eBay listings**
+- `dry-run`: source and validate without eBay, email, or Sheets writes — **safe testing**
 - `sheet-sync-only`: create/repair `Auto Lister`, replay queued rows, and backfill history
 - `email-test`: send a harmless test message without creating a listing
-- `full`: run the production listing pipeline — **the only mode that creates listings**
 
-Extra guards:
+Because `full` is the default, clicking **Run workflow** without changing the input
+publishes. Pick `dry-run` when you only want to test.
 
-- Repository variable **`LIVE_LISTING=0`** hard-stops publishing regardless of mode.
+Notes:
+
+- The daily run needs `ALIEXPRESS_ACCESS_TOKEN` set, or it sources nothing (see the secrets
+  table above).
 - Locally, `python3 daily_run.py` is always a dry run; only `--live` publishes.
 
 To enable the daily schedule later, uncomment the two `schedule` lines in
