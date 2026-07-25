@@ -206,8 +206,8 @@ class SourceValidationTests(unittest.TestCase):
 
     def test_visible_price_and_checkout_cost_contract(self):
         payload = source()
-        payload["selected_variants"][0]["visible_item_price"] = "14.99"
-        with self.assertRaisesRegex(JobError, "below USD 15"):
+        payload["selected_variants"][0]["visible_item_price"] = "9.99"
+        with self.assertRaisesRegex(JobError, "below USD 10"):
             normalize_source(payload)
         payload = source()
         payload["selected_variants"][0]["delivered_total"] = "0"
