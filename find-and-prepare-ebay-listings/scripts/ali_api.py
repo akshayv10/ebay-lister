@@ -51,8 +51,8 @@ USE_FREIGHT = os.environ.get("ALI_USE_FREIGHT", "1").strip().lower() in {"1", "t
 # provides a real star rating and review count, so these gates are exact (unlike the
 # Affiliate API, which could only approximate them).
 MIN_RATING = float(os.environ.get("ALI_MIN_RATING", "4.5"))
-MIN_REVIEWS = int(os.environ.get("ALI_MIN_REVIEWS", "25"))
-MIN_ORDERS = int(os.environ.get("ALI_MIN_ORDERS", "100"))
+MIN_REVIEWS = int(os.environ.get("ALI_MIN_REVIEWS", "50"))
+MIN_ORDERS = int(os.environ.get("ALI_MIN_ORDERS", "250"))
 MIN_PRICE_USD = Decimal(os.environ.get("ALI_MIN_PRICE_USD", "15"))
 # Delivered-cost estimate used only when freight lookup is unavailable/failed.
 SHIP_PCT = Decimal(os.environ.get("ALI_SHIPPING_PCT", "0"))

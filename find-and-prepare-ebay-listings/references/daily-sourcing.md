@@ -12,7 +12,7 @@
 
 - Find exactly two functionally distinct products from one niche.
 - Use AliExpress for sourcing and eBay US only for duplicate inventory checks and preparing unpublished API offers. Do not research eBay sold listings, demand, or comparable sales.
-- Allow unbranded products and lesser-known Chinese or non-global brands. Require US delivery region, rating at least 4.5, at least 25 reviews every run, at least 100 orders/sales, and a visible selected-variant single-unit item price of at least USD 15. Checkout cost is a downstream pricing input, not a viability gate.
+- Allow unbranded products and lesser-known Chinese or non-global brands. Require US delivery region, rating at least 4.5, at least 50 reviews every run, at least 250 orders/sales, and a visible selected-variant single-unit item price of at least USD 15. Checkout cost is a downstream pricing input, not a viability gate.
 - Reject ingestibles, medical claims, restricted goods, dangerous electrical products, counterfeits, franchise or licensed identities, and avoidable fitment dependence.
 - Use `/Users/akballer47/Documents/Codex/resale-product-history.jsonl` and `Asia/Kolkata`.
 
@@ -43,7 +43,7 @@ Do not reject an unfamiliar, lesser-known, or Chinese brand merely because a nam
 Use this order so rejected candidates are inexpensive:
 
 1. Prefilter a batch of search cards without opening obviously ineligible products.
-2. On the product page, verify rating, at least 25 reviews, at least 100 sales, US availability, and allowed brand classification using only the compact top product panel plus specifications when necessary.
+2. On the product page, verify rating, at least 50 reviews, at least 250 sales, US availability, and allowed brand classification using only the compact top product panel plus specifications when necessary.
 3. Check the once-per-run inventory/history exclusion set.
 4. Select the exact single-unit variant and verify its ordinary visible item price is at least USD 15, excluding bulk tiers, coupons, coins, credits, and rewards.
 5. When the visible price passes, record the candidate as accepted at gate `visible_price`.
