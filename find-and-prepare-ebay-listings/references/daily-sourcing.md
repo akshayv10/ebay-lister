@@ -15,7 +15,7 @@
 - Find exactly two functionally distinct products from one niche.
 - Use eBay US Sold Items to discover what to search for, AliExpress for sourcing the supplier match, and eBay US again for duplicate inventory checks, demand confirmation (see eBay demand confirmation), and preparing unpublished API offers.
 - Allow unbranded products and lesser-known Chinese or non-global brands. Require US delivery region, rating at least 4.5, at least 50 reviews every run, at least 250 orders/sales, and a visible selected-variant single-unit item price of at least USD 10. Checkout cost is a downstream pricing input, not a viability gate.
-- Reject ingestibles, medical claims, restricted goods, dangerous electrical products, counterfeits, franchise or licensed identities, and avoidable fitment dependence.
+- Reject ingestibles, medical claims, restricted goods, dangerous electrical products, counterfeits, franchise or licensed identities, apparel/clothing, and avoidable fitment dependence.
 - Use `/Users/akballer47/Documents/Codex/resale-product-history.jsonl` and `Asia/Kolkata`.
 
 ## Niche rotation

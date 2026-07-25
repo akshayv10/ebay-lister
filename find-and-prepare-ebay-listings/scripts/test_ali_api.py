@@ -133,6 +133,13 @@ def test_blocked_category_rejected() -> None:
         }
 
     assert ali_api.gate_reason(ali_api.flatten_card(card("Electronic Components & Supplies"))) == "blocked category"
+    # Apparel is off-niche for every target niche.
+    assert ali_api.gate_reason(ali_api.flatten_card(card("Women's Clothing"))) == "blocked category"
+    assert ali_api.gate_reason(ali_api.flatten_card(card("Men's Clothing"))) == "blocked category"
+    assert ali_api.gate_reason(ali_api.flatten_card(card("Underwear & Sleepwears"))) == "blocked category"
+    # Doll clothes/shoes stay filed under Toys & Hobbies and must not be caught by the
+    # apparel block.
+    assert ali_api.gate_reason(ali_api.flatten_card(card("Toys & Hobbies", "Dolls & Accessories"))) is None
     # A niche's own top-level category must not be blocked.
     assert ali_api.gate_reason(ali_api.flatten_card(card("Home & Garden"))) is None
     # A second-level like "Beauty Tools" must NOT trip the "tools" block (exact top-level match).

@@ -197,6 +197,10 @@ ELECTRONICS_TERMS = {
 # the specific bad items in those categories are caught by ELECTRONICS_TERMS instead.
 BLOCKED_CATEGORIES = {
     "electronic components & supplies", "security & protection",
+    # Apparel: sizing/fit returns and counterfeit/trademark risk make clothing a poor fit
+    # for this resale pipeline. Top-level only, so e.g. doll clothes (filed under "Toys &
+    # Hobbies") are unaffected.
+    "women's clothing", "men's clothing", "underwear & sleepwears",
 }
 
 
