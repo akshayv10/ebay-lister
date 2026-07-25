@@ -147,7 +147,8 @@ def test_string_list_reads_feed_image_key() -> None:
 def test_detail_enrichment_uses_fuller_gallery(monkeypatch) -> None:
     # A feed card only has 1 image and no review count, so with a token configured the
     # sourcing loop enriches via get_product_detail() for rating/reviews. That same detail
-    # response's gallery (3 images) must replace the feed's 1-image list, not be discarded.
+    # response's gallery (3 images) must be merged into the feed's 1-image list (not
+    # discarded, and not overwriting the feed image the detail gallery lacks).
     feed_card = {
         "product_id": "1005006000000001",
         "product_title": "Stand Mixer Accessory Kit",
@@ -167,7 +168,9 @@ def test_detail_enrichment_uses_fuller_gallery(monkeypatch) -> None:
         "Smartphone Accessories", "20260722T090000", "2026-07-22", history=[], needed=1
     )
     assert len(sources) == 1
-    assert len(sources[0]["source_images"]) == 3
+    images = sources[0]["source_images"]
+    assert "https://x/main.jpg" in images  # feed image preserved
+    assert len(images) == 4  # 1 feed image + 3 detail images, merged and deduped
 
 
 def test_source_products_finds_two() -> None:
