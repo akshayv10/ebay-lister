@@ -134,9 +134,13 @@ inbox, lists the linked product, and replies with the live eBay link.
 **Safety (starts paused / dry-run, like the daily workflow)**
 - Only emails **from an authorized sender** (defaults to `NOTIFY_EMAIL` / `NOTIFY_FROM` /
   `SMTP_USER` — i.e. you) **and** with the `LIST:` subject tag are acted on. Everything else
-  is ignored. Override the allow-list with `INBOX_ALLOWED_SENDERS` (comma-separated).
+  is left untouched. Override the allow-list with `INBOX_ALLOWED_SENDERS` (comma-separated).
+- The `From` header is spoofable, so for live use set a secret **`INBOX_SECRET`** (a repo
+  secret): a `LIST:` email must then also contain that token in the subject or body before
+  anything is published. Recommended once you flip publishing on.
 - Publishing is opt-in: set repository **variable `LIVE_LISTING=1`** to actually list.
-  Without it every run is a dry run that reads mail and validates but lists nothing.
+  Without it every run is a dry run that reads mail and validates but lists nothing — and a
+  dry run **leaves the request unread** (pending), so nothing is lost before you go live.
 - To poll automatically, uncomment the `schedule` line in `inbox.yml` (every 15 min).
   You can also run it any time via **Actions → Inbox link lister → Run workflow**.
 - **Quality gates are advisory here**: because you hand-picked the product, a gate miss

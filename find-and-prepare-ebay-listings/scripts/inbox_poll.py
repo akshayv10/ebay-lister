@@ -8,22 +8,28 @@ lists it (dry-run unless ``--live``), replies with the eBay link, and marks the 
 read so it is not processed twice.
 
 Safety:
+  * Only messages whose subject starts with INBOX_SUBJECT_TAG (default ``LIST:``) are
+    considered; everything else is left untouched (unread).
   * Only messages whose From address matches an authorized sender are acted on
-    (defaults to NOTIFY_EMAIL / NOTIFY_FROM / SMTP_USER — i.e. you). Random inbound
-    mail can never trigger a listing.
-  * Only messages whose subject starts with INBOX_SUBJECT_TAG (default ``LIST:``).
+    (defaults to NOTIFY_EMAIL / NOTIFY_FROM / SMTP_USER — i.e. you).
+  * Because the From header is spoofable, set INBOX_SECRET to require a shared token in
+    the subject/body before anything is published — recommended once live.
+  * Messages are fetched with BODY.PEEK[] (no auto \\Seen); \\Seen is set only when a
+    message is accepted (live) or rejected. In dry-run an accepted request is left unread
+    so a later live poll still sees it — dry-run never consumes a request.
   * The existing dedup history (state/resale-product-history.jsonl) plus the \\Seen flag
     guard against double-listing.
 
 Run:
-    python inbox_poll.py           # dry run: read + validate + reply "would list", no publish
-    python inbox_poll.py --live    # actually publish each requested link
+    python inbox_poll.py           # dry run: read + validate, nothing published, request left pending
+    python inbox_poll.py --live    # publish each requested link and reply with the eBay link
 
 Environment (reuses the lister's Gmail app password):
     SMTP_USER / SMTP_PASS   Gmail address + app password (also used for IMAP login)
     IMAP_HOST (default imap.gmail.com), IMAP_PORT (default 993)
     INBOX_SUBJECT_TAG (default "LIST:")
     INBOX_ALLOWED_SENDERS  comma-separated override; defaults to NOTIFY_EMAIL/NOTIFY_FROM/SMTP_USER
+    INBOX_SECRET           optional shared token that must appear in the subject/body
 """
 
 from __future__ import annotations
@@ -120,34 +126,50 @@ def poll(live: bool) -> dict[str, Any]:
         status, data = imap.search(None, "UNSEEN")
         if status != "OK":
             raise RuntimeError(f"IMAP search failed: {status}")
+        secret = os.environ.get("INBOX_SECRET", "").strip()
         ids = data[0].split()
         for num in ids:
-            fetch_status, fetch_data = imap.fetch(num, "(RFC822)")
+            # BODY.PEEK[] reads the message WITHOUT setting \Seen, so unrelated mail we
+            # decide not to process is left untouched. We set \Seen explicitly, and only
+            # for messages we actually accept (live) or reject.
+            fetch_status, fetch_data = imap.fetch(num, "(BODY.PEEK[])")
             if fetch_status != "OK" or not fetch_data or not isinstance(fetch_data[0], tuple):
                 continue
             msg = email.message_from_bytes(fetch_data[0][1])
             subject = _decode(msg.get("Subject", ""))
             sender = _from_address(msg)
+            body = _text_body(msg)
 
             if SUBJECT_TAG and not subject.strip().upper().startswith(SUBJECT_TAG.upper()):
-                continue  # not a listing request; leave unread
+                continue  # not a listing request; leave unread (untouched)
             if allowed and sender not in allowed:
                 outcome["skipped"].append({"from": sender, "subject": subject, "reason": "unauthorized sender"})
-                # Mark read so an unauthorized LIST: email isn't reprocessed every poll.
+                imap.store(num, "+FLAGS", "\\Seen")  # reject: don't reprocess every poll
+                continue
+            # Defense-in-depth: the From header is spoofable, so when a shared secret is
+            # configured, the token must also appear in the subject or body before we act.
+            if secret and secret not in subject and secret not in body:
+                outcome["skipped"].append({"from": sender, "subject": subject, "reason": "missing secret token"})
                 imap.store(num, "+FLAGS", "\\Seen")
                 continue
 
-            url = _first_ali_url(subject, _text_body(msg))
+            url = _first_ali_url(subject, body)
             if not url:
                 outcome["skipped"].append({"from": sender, "subject": subject, "reason": "no AliExpress URL"})
                 imap.store(num, "+FLAGS", "\\Seen")
                 continue
 
-            # Mark read BEFORE listing so a crash mid-publish can't cause a double-list
-            # on the next poll (the \Seen flag + dedup history are the idempotency guard).
+            if not live:
+                # Dry-run must not consume the request: leave it UNREAD so a later live poll
+                # picks it up. (Publishing nothing, we also send no email.)
+                outcome["skipped"].append({"from": sender, "url": url, "reason": "dry run — left pending"})
+                continue
+
+            # Live: mark read BEFORE listing so a crash mid-publish can't double-list on the
+            # next poll (the \Seen flag + dedup history are the idempotency guard).
             imap.store(num, "+FLAGS", "\\Seen")
-            result = list_from_url.list_one(url, live=live)
-            if live and not os.environ.get("INBOX_NO_EMAIL"):
+            result = list_from_url.list_one(url, live=True)
+            if not os.environ.get("INBOX_NO_EMAIL"):
                 try:
                     import notify
 

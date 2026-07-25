@@ -29,9 +29,11 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from decimal import Decimal
+
 import ali_api
 import notify
-from listing_job import normalize_source
+from listing_job import JobError, normalize_source
 from ebay_common import EbayError, write_json
 
 RUN_TZ = os.environ.get("RUN_TZ", "Asia/Kolkata")
@@ -57,7 +59,9 @@ def build_source(url: str, run_stamp: str, local_date: str) -> tuple[dict[str, A
         flat, niche="on-demand", run_stamp=run_stamp, local_date=local_date, enforce_gates=False
     )
     # Fail early on any schema problem, before eBay — mirrors daily_run.write_sources.
-    normalize_source(source)
+    # The on-demand path relaxes the $15 visible-price floor to a listable minimum so a
+    # cheap hand-picked item is warned-not-blocked (matching gate_reason's advisory role).
+    normalize_source(source, min_visible_price=Decimal("0.01"))
     return source, warning
 
 
@@ -83,12 +87,14 @@ def list_one(url: str, live: bool) -> dict[str, Any]:
     result: dict[str, Any] = {
         "date": local_date, "niche": "on-demand", "run_stamp": f"ondemand-{run_stamp}",
         "status": "error", "products": [], "listed_count": 0, "notes": [],
-        "source_url": url,
+        "source_url": url, "expected_count": 1,
     }
 
     try:
         source, warning = build_source(url, run_stamp, local_date)
-    except (ali_api.AliError, ValueError) as exc:
+    except (ali_api.AliError, JobError, ValueError) as exc:
+        # A bad link or unlistable product must degrade to a clean per-request error —
+        # never propagate out of list_one, or a single bad email would abort the poll.
         result["error"] = f"Could not prepare a listing from {url}: {exc}"
         return result
 

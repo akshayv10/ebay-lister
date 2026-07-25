@@ -72,7 +72,7 @@ def deterministic_group_key(product_id: str) -> str:
     return f"ALI-GROUP-{product_id}"[:50]
 
 
-def normalize_source(source: dict[str, Any]) -> dict[str, Any]:
+def normalize_source(source: dict[str, Any], min_visible_price: Decimal = Decimal("15.00")) -> dict[str, Any]:
     normalized: dict[str, Any] = {"mode": "ebay_api"}
     for key in (
         "run_id", "local_calendar_date", "assigned_niche", "product_id", "source_title",
@@ -141,8 +141,8 @@ def normalize_source(source: dict[str, Any]) -> dict[str, Any]:
         clean_options = {str(key).strip(): str(value).strip() for key, value in options.items() if str(key).strip() and str(value).strip()}
         visible = decimal_value(item.get("visible_item_price"), f"{variant_id}.visible_item_price")
         delivered = decimal_value(item.get("delivered_total"), f"{variant_id}.delivered_total")
-        if visible < Decimal("15.00"):
-            raise JobError(f"Variant {variant_id} visible item price is below USD 15")
+        if visible < min_visible_price:
+            raise JobError(f"Variant {variant_id} visible item price is below USD {min_visible_price:.2f}")
         if delivered <= 0:
             raise JobError(f"Variant {variant_id} delivered total must be positive")
         if int(item.get("quantity", 1)) != 1:

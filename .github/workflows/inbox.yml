@@ -67,6 +67,9 @@ jobs:
       IMAP_HOST: ${{ vars.IMAP_HOST || 'imap.gmail.com' }}
       IMAP_PORT: ${{ vars.IMAP_PORT || '993' }}
       INBOX_SUBJECT_TAG: ${{ vars.INBOX_SUBJECT_TAG || 'LIST:' }}
+      # Optional shared secret: when set, a LIST: email must also contain this token in
+      # the subject/body before anything is published (mitigates a spoofed From header).
+      INBOX_SECRET: ${{ secrets.INBOX_SECRET }}
     steps:
       - uses: actions/checkout@v5
 

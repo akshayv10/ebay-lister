@@ -67,6 +67,33 @@ def test_build_source_reports_gate_warning() -> None:
     assert source["listing_title"]
 
 
+def test_cheap_link_lists_with_warning() -> None:
+    # A product below the $15 gate is advisory on the on-demand path: build_source must
+    # NOT raise (the daily normalize_source floor is relaxed), and the price is warned.
+    detail = _details()[5]  # $3.00 -> "price < 15" warning
+    orig = ali_api.get_product_detail
+    ali_api.get_product_detail = lambda pid: detail
+    try:
+        source, warning = list_from_url.build_source(
+            "https://www.aliexpress.us/item/1005006000000006.html", "20260101T000000", "2026-01-01")
+    finally:
+        ali_api.get_product_detail = orig
+    assert warning and warning.startswith("price <")
+    assert source["selected_variants"][0]["visible_item_price"] == "3.00"
+
+
+def test_notify_counts_expected_from_result() -> None:
+    import notify
+    listed = {"status": "listed", "date": "2026-01-01", "niche": "on-demand",
+              "listed_count": 1, "expected_count": 1,
+              "products": [{"title": "x", "ebay_url": "https://ebay.com/itm/1"}]}
+    subject, text, _ = notify.compose(listed)
+    assert "1 of 1 listed" in subject and "1 of 1 listed" in text
+    # Daily result (no expected_count) still says "of 2".
+    daily = dict(listed); daily.pop("expected_count")
+    assert "1 of 2 listed" in notify.compose(daily)[0]
+
+
 def test_dry_run_result_shape() -> None:
     detail = _details()[0]  # fully eligible
     orig = ali_api.get_product_detail
