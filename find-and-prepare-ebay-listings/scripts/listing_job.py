@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+import ali_api
 from ebay_common import EbayError, read_json, write_json
 from ebay_price import quote
 
@@ -72,7 +73,7 @@ def deterministic_group_key(product_id: str) -> str:
     return f"ALI-GROUP-{product_id}"[:50]
 
 
-def normalize_source(source: dict[str, Any], min_visible_price: Decimal = Decimal("15.00")) -> dict[str, Any]:
+def normalize_source(source: dict[str, Any], min_visible_price: Decimal = ali_api.MIN_PRICE_USD) -> dict[str, Any]:
     normalized: dict[str, Any] = {"mode": "ebay_api"}
     for key in (
         "run_id", "local_calendar_date", "assigned_niche", "product_id", "source_title",
