@@ -4,14 +4,16 @@
 
 1. Daily defaults
 2. Niche rotation
-3. Exclusion and branding
-4. Candidate verification
-5. History timing
+3. eBay-first query discovery
+4. Exclusion and branding
+5. Candidate verification
+6. eBay demand confirmation
+7. History timing
 
 ## Daily defaults
 
 - Find exactly two functionally distinct products from one niche.
-- Use AliExpress for sourcing and eBay US only for duplicate inventory checks and preparing unpublished API offers. Do not research eBay sold listings, demand, or comparable sales.
+- Use eBay US Sold Items to discover what to search for, AliExpress for sourcing the supplier match, and eBay US again for duplicate inventory checks, demand confirmation (see eBay demand confirmation), and preparing unpublished API offers.
 - Allow unbranded products and lesser-known Chinese or non-global brands. Require US delivery region, rating at least 4.5, at least 50 reviews every run, at least 250 orders/sales, and a visible selected-variant single-unit item price of at least USD 15. Checkout cost is a downstream pricing input, not a viability gate.
 - Reject ingestibles, medical claims, restricted goods, dangerous electrical products, counterfeits, franchise or licensed identities, and avoidable fitment dependence.
 - Use `/Users/akballer47/Documents/Codex/resale-product-history.jsonl` and `Asia/Kolkata`.
@@ -30,6 +32,17 @@ Before sourcing, inspect Seller Hub Active Listings. Ensure `Start date` is visi
 
 Convert PST/PDT Start dates to `Asia/Kolkata`. Reuse today's recorded niche on a same-day rerun. When the previous five local days are complete, advance from the most recent niche. When incomplete, choose the least recently used niche and break ties by cycle order. Use `scripts/daily_history.py` rather than choosing manually.
 
+## eBay-first query discovery
+
+Before opening AliExpress, browse eBay US Sold Items within today's niche category to derive AliExpress search queries from products that have actually sold, instead of guessing plausible product concepts:
+
+1. In eBay US, search or browse the niche category and filter to Sold Items (or Completed Items). Free; no Store subscription and no restricted API required.
+2. Read titles, product types, and functional fingerprints across a batch of recent sold results (favor sales within the last 60 days). Group near-duplicate titles into one functional product type.
+3. Turn each distinct functional product type into a neutral functional search query for AliExpress (for example, a sold title "Magnetic Wallet Card Holder Stand for iPhone" becomes the query "magnetic wallet stand phone"). Do not carry over brand names, seller-specific wording, or an established global brand from the sold title.
+4. Record each derived query as a `search_batch` candidate through `scripts/candidate_ledger.py` before searching it on AliExpress, and mark it `productive` or `exhausted` after review, exactly as with any other search batch.
+
+Treat this list as a starting point, not a limit: keep broadening with adjacent eBay sold searches and AliExpress subcategories per the persistence rule in Candidate verification. A derived query only tells you what to search for; it never substitutes for the rating/reviews/sales/price gates or the eBay demand confirmation gate below, and it never overrides the exclusion, branding, or history rules.
+
 ## Exclusion and branding
 
 Build the exclusion set from accessible active eBay listings and every history record. Reject exact URLs and IDs, the same functional product under another title, cosmetic relists, recreated listings, and finalists that are close substitutes.
@@ -47,8 +60,9 @@ Use this order so rejected candidates are inexpensive:
 3. Check the once-per-run inventory/history exclusion set.
 4. Select the exact single-unit variant and verify its ordinary visible item price is at least USD 15, excluding bulk tiers, coupons, coins, credits, and rewards.
 5. When the visible price passes, record the candidate as accepted at gate `visible_price`.
-6. Click Buy Now only to capture a positive delivered cost for deterministic eBay pricing and record that evidence at gate `checkout_pricing`.
-7. Only when checkout pricing is available, write the complete API `source.json`. Do not mutate eBay until two products qualify and both source records validate.
+6. Confirm this specific candidate still matches the eBay-first query discovery gate below before proceeding. Record the outcome at gate `ebay_demand`.
+7. Click Buy Now only to capture a positive delivered cost for deterministic eBay pricing and record that evidence at gate `checkout_pricing`.
+8. Only when checkout pricing is available, write the complete API `source.json`. Do not mutate eBay until two products qualify and both source records validate.
 
 Stop at the first failed gate. Do not read the full page or open checkout merely to gather evidence for a candidate that has already failed.
 
@@ -60,15 +74,27 @@ For every finalist capture:
 - title, brand field, packaging, images, and selected-combination evidence showing the product is unbranded, an allowed lesser-known brand, or a prohibited global brand;
 - every real option axis and available combination;
 - visible single-unit page price and Buy Now checkout breakdown/final delivered cost for each selected combination;
-- material risk. Do not add an eBay-demand or sold-comparable rationale.
+- eBay sold count, most recent sold date, and active competing listing count from eBay demand confirmation;
+- material risk.
 
-Select a combination and record its ordinary visible single-unit item price first. If it is below USD 15, reject without clicking Buy Now. Once it passes, the product is viable regardless of checkout amount. Then click Buy Now only to reach read-only checkout review and record the positive delivered cost after automatic discounts, shipping, taxes, and import charges for eBay pricing. Do not apply coupons, coins, credits, rewards, or change address/payment settings. Never click a purchase control.
+Select a combination and record its ordinary visible single-unit item price first. If it is below USD 15, reject without clicking Buy Now. Once it passes the visible-price gate, run eBay demand confirmation below before Buy Now. Then click Buy Now only to reach read-only checkout review and record the positive delivered cost after automatic discounts, shipping, taxes, and import charges for eBay pricing. Do not apply coupons, coins, credits, rewards, or change address/payment settings. Never click a purchase control.
 
-Reject and replace when required viability evidence is missing, the visible price is below USD 15, an established global brand or counterfeit/trademark risk is present, or inventory/history overlaps. Do not reject because checkout is blocked or because its total is below USD 15. If checkout cannot provide a positive delivered cost, preserve the accepted candidate and pause before `source.json` initialization with a `checkout_pricing` blocker. Do not reject solely because a lesser-known brand is present. Never relax a threshold or switch niches to fill the second slot. Never treat an exhausted query, search page, or initial set of subcategories as a sourcing failure: keep broadening queries and exploring functionally relevant subcategories within the assigned niche until two products qualify. Pause only for an explicit external blocker named in the main skill contract, preserving the run for resumption.
+Reject and replace when required viability evidence is missing, the visible price is below USD 15, an established global brand or counterfeit/trademark risk is present, inventory/history overlaps, or the product fails eBay demand confirmation. Do not reject because checkout is blocked or because its total is below USD 15. If checkout cannot provide a positive delivered cost, preserve the accepted candidate and pause before `source.json` initialization with a `checkout_pricing` blocker. Do not reject solely because a lesser-known brand is present. Never relax a threshold or switch niches to fill the second slot. Never treat an exhausted query, search page, or initial set of subcategories as a sourcing failure: keep broadening queries and exploring functionally relevant subcategories within the assigned niche until two products qualify. Pause only for an explicit external blocker named in the main skill contract, preserving the run for resumption.
 
 Maintain `candidate-ledger.jsonl` through `scripts/candidate_ledger.py`. Record every accepted or rejected candidate with its first terminal gate and every search-result batch with a stable key and productive/exhausted outcome. Use it to skip every previously evaluated URL and batch. Reuse one candidate tab, scan cards in batches, and move forward after an unproductive page or query; persistence must broaden the search rather than repeat it.
 
 Capture verified media, factual copy inputs, Brand, and item specifics for the API payload. Reject the product if source media reveals an established global brand, counterfeit risk, a material contradiction, or another stated exclusion. Generate no claim that is unsupported by the source evidence.
+
+## eBay demand confirmation
+
+Free, no Store subscription and no restricted API access required. Because each AliExpress query already originated from an eBay-first query discovery batch with sold evidence, this step only confirms the specific accepted candidate still matches that evidence — it is not a fresh open-ended demand search. Run this on eBay US for every candidate that has already passed the visible-price gate, before Buy Now:
+
+1. Compare the candidate's functional fingerprint against the sold titles from the eBay-first query discovery batch that produced its query. If the candidate is a clear functional match, reuse that batch's sold count, most recent sold date, and active listing count as its evidence.
+2. If the candidate diverges from the original sold titles (a materially different form factor or function), search eBay US Sold Items directly for the candidate's specific functional product and read the sold count and most recent sold date from the results list only; do not open individual sold listings unless a count is ambiguous. Separately note the active competing listing count from the unfiltered search.
+3. Require at least one sold result within the last 60 days, from either the reused batch evidence or a fresh check. Reject the candidate if there are zero sold results in that window, or if active listings heavily outnumber sold results with no recent sales (an oversaturated, non-selling niche on eBay).
+4. Record the sold count, most recent sold date, and active listing count as evidence, noting whether it was reused from query discovery or freshly checked. Record the candidate's outcome at gate `ebay_demand` via `scripts/candidate_ledger.py`.
+
+This gate evaluates eBay-specific demand only; it does not replace or relax the AliExpress rating/reviews/sales/price gates, and it never overrides exclusion, branding, or history rules. If eBay's Sold Items filter is temporarily unavailable, treat it as a blocker for that candidate rather than skipping the gate.
 
 ## History timing
 

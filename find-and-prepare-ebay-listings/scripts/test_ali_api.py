@@ -19,6 +19,18 @@ def _details() -> list[dict]:
     return ali_api.discover("anything", 1)
 
 
+class _FakeEbayClient:
+    """Stand-in for ebay_common.EbayClient in tests: no network, fixed count."""
+
+    def __init__(self, active: int) -> None:
+        self.active = active
+        self.queries: list[str] = []
+
+    def active_listing_count(self, query: str) -> int:
+        self.queries.append(query)
+        return self.active
+
+
 def test_flatten_reads_ds_dtos() -> None:
     stand = _details()[0]
     flat = ali_api.flatten_detail(stand)
@@ -165,7 +177,8 @@ def test_detail_enrichment_uses_fuller_gallery(monkeypatch) -> None:
     monkeypatch.setattr(ali_api, "get_product_detail", lambda product_id: detail)
 
     sources, _ = ali_api.source_products(
-        "Smartphone Accessories", "20260722T090000", "2026-07-22", history=[], needed=1
+        "Smartphone Accessories", "20260722T090000", "2026-07-22", history=[], needed=1,
+        ebay_client=_FakeEbayClient(active=0),
     )
     assert len(sources) == 1
     images = sources[0]["source_images"]
@@ -179,6 +192,47 @@ def test_source_products_finds_two() -> None:
         "Smartphone Accessories", "20260722T090000", "2026-07-22", history=[], needed=2
     )
     assert {s["product_id"] for s in sources} == {"1005006000000001", "1005006000000002"}
+
+
+def test_ebay_saturation_reason_threshold() -> None:
+    assert ali_api.ebay_saturation_reason(10) is None
+    assert ali_api.ebay_saturation_reason(ali_api.MAX_ACTIVE_LISTINGS) is None
+    assert ali_api.ebay_saturation_reason(ali_api.MAX_ACTIVE_LISTINGS + 1) == (
+        f"ebay active listings > {ali_api.MAX_ACTIVE_LISTINGS}"
+    )
+
+
+def test_source_products_skips_ebay_check_in_fixture_mode_by_default() -> None:
+    # No ebay_client passed and fixture mode active -> no network call is attempted,
+    # per the "offline/testing" contract in the module docstring.
+    os.environ["ALI_API_FIXTURE"] = str(FIXTURE)
+    sources, _ = ali_api.source_products(
+        "Smartphone Accessories", "20260722T090000", "2026-07-22", history=[], needed=2
+    )
+    assert "ebay_active_listings" not in sources[0]
+
+
+def test_source_products_rejects_oversaturated_candidate() -> None:
+    os.environ["ALI_API_FIXTURE"] = str(FIXTURE)
+    fake = _FakeEbayClient(active=ali_api.MAX_ACTIVE_LISTINGS + 1)
+    sources, notes = ali_api.source_products(
+        "Smartphone Accessories", "20260722T090000", "2026-07-22", history=[], needed=2,
+        ebay_client=fake,
+    )
+    assert sources == []
+    assert any("ebay-saturation" in note for note in notes)
+    assert fake.queries  # the gate actually ran
+
+
+def test_source_products_records_active_listing_evidence() -> None:
+    os.environ["ALI_API_FIXTURE"] = str(FIXTURE)
+    fake = _FakeEbayClient(active=25)
+    sources, _ = ali_api.source_products(
+        "Smartphone Accessories", "20260722T090000", "2026-07-22", history=[], needed=2,
+        ebay_client=fake,
+    )
+    assert len(sources) == 2
+    assert all(s["ebay_active_listings"] == 25 for s in sources)
 
 
 def test_history_dedup_skips_known_product() -> None:
