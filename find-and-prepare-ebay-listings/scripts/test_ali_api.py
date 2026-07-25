@@ -88,6 +88,42 @@ def test_component_titles_are_rejected() -> None:
         assert not ali_api.is_component(title), title
 
 
+def test_bare_electronics_titles_are_rejected() -> None:
+    # The real offenders that slipped past the title gates: airsoft/FPV/PC-part electronics.
+    for title in [
+        "T238 V1.9 V2 Digital Trigger Unit 45x30x14mm Binary Overheat Protection",
+        "RUSHFPV MAX SOLO 5.8GHz 2.5W VTX with CNC Shell & Cooling Fan",
+        "Coxbyte TG-30 Thermal Grease 4g CPU GPU Silicone Paste 17.5W/m-K",
+        "AMPCOM 1000Mbps Gigabit Ethernet Switch 5/8 Port RJ45 Full Metal Case",
+        "Arduino UNO R3 Development Board Microcontroller",
+    ]:
+        assert ali_api.is_bare_electronics(title), title
+    # Finished consumer goods (incl. a finished drone) must NOT be flagged as electronics.
+    for title in [
+        "RC Drone 4K Camera Foldable Quadcopter",
+        "LED Strip Light Kit RGB",
+        "Ceramic Coffee Mug Set 350ml",
+    ]:
+        assert not ali_api.is_bare_electronics(title), title
+
+
+def test_blocked_category_rejected() -> None:
+    def card(category: str) -> dict:
+        return {
+            "product_id": "1005006000000078",
+            "product_title": "Desk Cable Management Tray Organizer",  # no electronics keyword
+            "target_sale_price": "19.99",
+            "evaluate_rate": "96.0%",
+            "lastest_volume": "300",
+            "product_main_image_url": "https://x/main.jpg",
+            "first_level_category_name": category,
+        }
+
+    assert ali_api.gate_reason(ali_api.flatten_card(card("Computer & Office"))) == "blocked category"
+    # A niche's own category must not be blocked.
+    assert ali_api.gate_reason(ali_api.flatten_card(card("Home & Garden"))) is None
+
+
 def test_string_list_reads_feed_image_key() -> None:
     # The DS feed nests gallery images under productSmallImageUrl — all must be captured.
     card = {
