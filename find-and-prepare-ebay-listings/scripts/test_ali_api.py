@@ -37,7 +37,7 @@ def test_gates_reject_expected() -> None:
     assert ali_api.gate_reason(f(d[0])) is None                  # eligible
     assert ali_api.gate_reason(f(d[1])) is None                  # eligible (rating 4.6, 90 reviews)
     assert ali_api.gate_reason(f(d[2])) == "excluded brand"      # Apple iPhone
-    assert ali_api.gate_reason(f(d[3])) == "reviews < 25"        # only 5 reviews
+    assert ali_api.gate_reason(f(d[3])) == f"reviews < {ali_api.MIN_REVIEWS}"  # only 5 reviews
     assert ali_api.gate_reason(f(d[4])) == "restricted category" # supplement
     assert ali_api.gate_reason(f(d[5])) == f"price < {ali_api.MIN_PRICE_USD}"  # $3.00
 
