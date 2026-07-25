@@ -990,6 +990,13 @@ def source_products(
                         failed_gates += 1
                         notes.append(f"[detail-gate {product_id}] {reason}")
                         continue
+                elif flat.get("rating") is None:
+                    # Token-free path: the feed provided no rating, so MIN_RATING can't be
+                    # checked. Reject rather than publish an unrated product (gate_reason
+                    # skips a None rating, so this must be enforced explicitly here).
+                    failed_gates += 1
+                    notes.append(f"[feed-gate {product_id}] no rating")
+                    continue
                 source = product_to_source(flat, niche, run_stamp, local_date)
             except AliError as exc:
                 notes.append(f"[card] {exc}")
