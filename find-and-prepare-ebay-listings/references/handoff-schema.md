@@ -1,5 +1,28 @@
 # API listing schemas
 
+## External reviewed batch
+
+The `find-resale-products` workflow dispatch accepts one schema-version-1 envelope with
+`local_calendar_date`, `assigned_niche`, and exactly two distinct products. Each product
+must provide canonical AliExpress identity, title, functional fingerprint, verified
+brand plus evidence, rating/reviews/orders, explicit US-region confirmation, material
+risk, and:
+
+```json
+{
+  "selected_variant": {
+    "options": {"Color": "Black", "Connector": "USB-C"},
+    "display_label": "Black / USB-C, quantity 1",
+    "visible_item_price": "17.99",
+    "checkout_total": "Unavailable"
+  }
+}
+```
+
+Derive the batch ID deterministically from the date, niche, product IDs, and structured
+option values. Re-fetch current AliExpress detail and resolve the options to exactly one
+SKU. Never replace an unresolved selection with the cheapest or default variant.
+
 ## Source
 
 Each product directory contains `source.json` with required sourcing identity, verified listing content, and 1–4 combinations:

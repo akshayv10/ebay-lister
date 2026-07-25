@@ -13,6 +13,9 @@ Use the official eBay APIs by default. Find and initialize both products, prepar
 - Keep `publish_allowed: false` throughout sourcing and preparation.
 - Treat `ebay_listing.py publish` as a separate workflow requiring a new explicit user instruction and the exact prepared run ID.
 - Publish exactly two products as one batch. If either listing or its 10% General promotion fails, remove newly created ads and withdraw the whole pair.
+- For the dedicated `find-resale-products` GitHub handoff only, use the independent
+  prepare/publish commands: a successful sibling may remain prepared or live when the
+  other fails. Never apply that exception to the ordinary two-product API run.
 - Require General/CPS promotion at exactly 10%; never create or join Priority/CPC promotion.
 - Never expose Client ID, Client Secret, RuName, authorization code, access token, or refresh token in logs, commands, artifacts, or chat. Use macOS Keychain.
 - Never include the full dispatch address in run artifacts. Use merchant location key `irvine-92618`.
@@ -88,6 +91,25 @@ python3 scripts/ebay_listing.py reconcile --run-dir <run-directory>
 
 Use the read-only observations to decide whether correction, rollback, or user input is needed. Preserve all run artifacts.
 
+## 7. Accept a reviewed GitHub handoff
+
+Use `.github/workflows/handoff.yml` only for a schema-version-1 batch from the installed
+`find-resale-products` skill. Run `scripts/handoff_batch.py` to re-fetch both AliExpress
+products, enforce all gates, and resolve each structured selected variant to exactly one
+current SKU. Block only the affected product when current evidence or the variant is
+missing or ambiguous.
+
+Prepare with `ebay_listing.py prepare-independent`. Upload the complete unpublished run
+as `prepared-<exact-run-id>` for seven days. Publish later only when the dispatch includes
+the prepare Actions run ID and the matching exact logical run ID, using
+`ebay_listing.py publish-independent`.
+
+For this handoff path, preserve a successful sibling. If General/CPS promotion at 10%
+fails after publication, withdraw only that product. Mark unknown mutations
+`reconciliation_required` and use the read-only reconcile command instead of retrying.
+Commit only verified successful listing history; never commit the dispatch payload or
+prepared artifact.
+
 ## References and helpers
 
 - [references/ebay-api-setup.md](references/ebay-api-setup.md): Production developer, OAuth, Keychain, policies, location, and campaign setup.
@@ -98,6 +120,7 @@ Use the read-only observations to decide whether correction, rollback, or user i
 - [references/report-format.md](references/report-format.md): unpublished review and live-result reporting.
 - `scripts/ebay_setup.py`: secure Production OAuth and seller-account setup.
 - `scripts/ebay_listing.py`: prepare, publish, rollback, and reconcile.
+- `scripts/handoff_batch.py`: strict two-product dispatch validation and exact-variant mapping.
 - `scripts/listing_job.py`: deterministic source and review validation.
 - `scripts/extension_job.py`: legacy extension state validation for explicit fallback only.
 - `scripts/candidate_ledger.py`, `daily_history.py`, `ebay_price.py`, `variant_rank.py`, and `run_budget.py`: retained deterministic helpers.

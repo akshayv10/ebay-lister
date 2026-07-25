@@ -122,6 +122,33 @@ To enable the daily schedule later, uncomment the two `schedule` lines in
 `.github/workflows/daily.yml` and set the cron to your time **in UTC**. Scheduled runs
 already publish — they are included in the LIVE condition in the run step.
 
+## Prepare a verified pair from `find-resale-products`
+
+`.github/workflows/handoff.yml` accepts the exact two-product batch produced by the
+installed `find-resale-products` skill. It is intentionally separate from daily
+auto-sourcing and the advisory single-link inbox path.
+
+The prepare dispatch:
+
+1. re-fetches both product IDs through the AliExpress DS API;
+2. hard-enforces rating, reviews, orders, US-region, image, brand, and current
+   exact-variant price gates;
+3. resolves the browser-selected option values to one current AliExpress SKU;
+4. creates unpublished eBay offers independently; and
+5. uploads a seven-day `prepared-<frp-run-id>` review artifact.
+
+Nothing is published during prepare. A later publish dispatch must provide both the
+prepare Actions run ID and the exact reviewed `frp-...` logical run ID. Each product is
+then published and promoted independently: a successful listing remains live if its
+sibling fails, while a product whose mandatory 10% General promotion fails is withdrawn.
+Ambiguous mutations are marked for read-only reconciliation and are never blindly
+retried.
+
+The batch payload is passed as base64 JSON through `workflow_dispatch` and is not
+committed. Successful live listing history continues to be committed under `state/`.
+The local skill uses `gh workflow run ... --json`, waits for the result, and reconciles
+verified live item IDs and URLs back to the local resale history.
+
 ## List a link on demand (email)
 
 Besides the daily auto-sourcing, you can list a **specific** AliExpress product you found
