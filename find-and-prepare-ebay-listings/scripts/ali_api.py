@@ -1043,6 +1043,18 @@ def source_products(
                     # rating — an unverified rating can't be allowed to pass MIN_RATING.
                     flat["reviews"] = enriched.get("reviews")
                     flat["rating"] = enriched.get("rating")
+                    # The detail response also carries the product gallery
+                    # (ae_multimedia_info_dto.image_urls). It's usually richer than the
+                    # feed card's main + small image URLs, but not always, so merge
+                    # rather than replace — a sparser detail gallery must not shrink
+                    # what the feed already gave us.
+                    merged_images = list(flat.get("images") or [])
+                    seen_images = set(merged_images)
+                    for url in enriched.get("images") or []:
+                        if url not in seen_images:
+                            merged_images.append(url)
+                            seen_images.add(url)
+                    flat["images"] = merged_images[:MAX_IMAGES]
                     reason = gate_reason(flat)
                     if reason is not None:
                         failed_gates += 1

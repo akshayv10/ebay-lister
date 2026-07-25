@@ -144,6 +144,35 @@ def test_string_list_reads_feed_image_key() -> None:
     assert flat["images"] == ["https://x/main.jpg", "https://x/a.jpg", "https://x/b.jpg", "https://x/c.jpg"]
 
 
+def test_detail_enrichment_uses_fuller_gallery(monkeypatch) -> None:
+    # A feed card only has 1 image and no review count, so with a token configured the
+    # sourcing loop enriches via get_product_detail() for rating/reviews. That same detail
+    # response's gallery (3 images) must be merged into the feed's 1-image list (not
+    # discarded, and not overwriting the feed image the detail gallery lacks).
+    feed_card = {
+        "product_id": "1005006000000001",
+        "product_title": "Stand Mixer Accessory Kit",
+        "target_sale_price": "17.99",
+        "evaluate_rate": "96.0%",
+        "lastest_volume": "540",
+        "product_main_image_url": "https://x/main.jpg",
+    }
+    detail = _details()[0]
+    monkeypatch.setenv("ALIEXPRESS_ACCESS_TOKEN", "test-token")
+    monkeypatch.delenv("ALI_API_FIXTURE", raising=False)
+    monkeypatch.setattr(ali_api, "discover", lambda niche, page: [feed_card] if page == 1 else [])
+    monkeypatch.setattr(ali_api, "niche_feeds", lambda niche: ["fake_feed"])
+    monkeypatch.setattr(ali_api, "get_product_detail", lambda product_id: detail)
+
+    sources, _ = ali_api.source_products(
+        "Smartphone Accessories", "20260722T090000", "2026-07-22", history=[], needed=1
+    )
+    assert len(sources) == 1
+    images = sources[0]["source_images"]
+    assert "https://x/main.jpg" in images  # feed image preserved
+    assert len(images) == 4  # 1 feed image + 3 detail images, merged and deduped
+
+
 def test_source_products_finds_two() -> None:
     os.environ["ALI_API_FIXTURE"] = str(FIXTURE)
     sources, _ = ali_api.source_products(
