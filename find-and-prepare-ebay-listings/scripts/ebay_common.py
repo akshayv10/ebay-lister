@@ -274,6 +274,22 @@ class EbayClient:
             raise ApiError(method, response.url, response.status, response.data)
         return response
 
+    def active_listing_count(self, query: str) -> int:
+        """Total active EBAY_US listings matching ``query`` via the free Browse API.
+
+        Used as a saturation proxy: the Browse API has no sold-item data (that
+        needs the limited-release Marketplace Insights API), so this only tells
+        you how crowded the active market is, not how well it sells.
+        """
+        response = self.request(
+            "GET",
+            "/buy/browse/v1/item_summary/search",
+            query={"q": query, "limit": 1},
+            marketplace_header=True,
+        )
+        data = response.data if isinstance(response.data, dict) else {}
+        return int(data.get("total", 0) or 0)
+
 
 def consent_url(keychain: Keychain | None = None) -> str:
     secrets = keychain or Keychain()

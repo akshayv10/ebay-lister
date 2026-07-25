@@ -1,17 +1,17 @@
 name: Daily eBay auto-lister
 
-# AUTOMATION IS PAUSED — manual runs only, on purpose.
+# AUTOMATION IS LIVE — runs daily at 09:00 IST (03:30 UTC) and publishes real listings.
 #
 # Publishing is the default: mode "full" (the default) creates real eBay listings.
 # Pick "dry-run" to source and validate without listing anything. Mode alone decides
-# publishing — there is no separate kill switch.
+# publishing — there is no separate kill switch. Scheduled runs always publish; they
+# are already included in the LIVE condition below.
 #
-# To enable the daily schedule later, uncomment the two `schedule` lines and set the cron
-# to your desired time IN UTC (it may start a few minutes late; "0 14 * * *" is 14:00 UTC).
-# Scheduled runs publish — they are already included in the LIVE condition below.
+# To pause again, comment out the `schedule` block below (or disable the workflow in
+# the Actions tab).
 on:
-  # schedule:
-  #   - cron: "0 14 * * *"
+  schedule:
+    - cron: "30 3 * * *"  # 09:00 IST daily (IST is UTC+5:30, no DST); may start a few minutes late
   workflow_dispatch:
     inputs:
       mode:

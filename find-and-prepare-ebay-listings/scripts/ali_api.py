@@ -13,6 +13,15 @@ Two-step sourcing per candidate:
      1-5 star rating, review count, sales count, per-SKU price, and main images.
 Delivered cost uses aliexpress.ds.freight.calculate when available, else an estimate.
 
+After the AliExpress gates pass, a candidate also goes through a free eBay
+active-listing saturation check (EbayClient.active_listing_count, in
+ebay_common.py) via the public Browse API — reject when active competing
+listings exceed ALI_MAX_ACTIVE_LISTINGS. This is a saturation *proxy*, not real
+sold-item demand: the eBay API that reports actual sold data (Marketplace
+Insights) requires a limited-release application eBay may not grant, so this
+only tells you the active market isn't already flooded, not that the product
+sells. Skipped entirely in fixture/offline mode (no network call).
+
 Credentials (environment): ALIEXPRESS_APP_KEY, ALIEXPRESS_APP_SECRET, ALIEXPRESS_TRACKING_ID.
 
 Offline/testing: set ALI_API_FIXTURE to a JSON file with a list of DS ``product.get``
@@ -53,6 +62,9 @@ USE_FREIGHT = os.environ.get("ALI_USE_FREIGHT", "1").strip().lower() in {"1", "t
 MIN_RATING = float(os.environ.get("ALI_MIN_RATING", "4.5"))
 MIN_REVIEWS = int(os.environ.get("ALI_MIN_REVIEWS", "50"))
 MIN_ORDERS = int(os.environ.get("ALI_MIN_ORDERS", "250"))
+# Free eBay Browse API saturation proxy (no sold-item data available without the
+# limited-release Marketplace Insights API — see module docstring).
+MAX_ACTIVE_LISTINGS = int(os.environ.get("ALI_MAX_ACTIVE_LISTINGS", "500"))
 MIN_PRICE_USD = Decimal(os.environ.get("ALI_MIN_PRICE_USD", "15"))
 # Delivered-cost estimate used only when freight lookup is unavailable/failed.
 SHIP_PCT = Decimal(os.environ.get("ALI_SHIPPING_PCT", "0"))
@@ -643,6 +655,17 @@ def gate_reason(flat: dict[str, Any]) -> str | None:
     return None
 
 
+def ebay_saturation_reason(active_listing_count: int) -> str | None:
+    """None if the eBay active-listing count is below the saturation threshold.
+
+    This is a free active-listing proxy, not a real sold-item demand signal
+    (see module docstring); it only rejects markets that already look flooded.
+    """
+    if active_listing_count > MAX_ACTIVE_LISTINGS:
+        return f"ebay active listings > {MAX_ACTIVE_LISTINGS}"
+    return None
+
+
 # --- source.json construction -----------------------------------------------------
 
 def delivered_total(price: Decimal, shipping: Decimal | None) -> Decimal:
@@ -963,10 +986,17 @@ def source_products(
     local_date: str,
     history: list[dict[str, Any]],
     needed: int = 2,
+    ebay_client: Any | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Build a pool of gate-passing candidates across the consumer feeds, rank the pool by
     resale appeal (AI), and return the best ``needed`` as source records.
     Falls back to deterministic order when the ranker is unavailable.
+
+    ``ebay_client`` (duck-typed to ``EbayClient.active_listing_count``) is used for the
+    eBay saturation gate once a candidate has already cleared every AliExpress gate.
+    Pass a fake for tests; left as ``None`` a real ``EbayClient`` is constructed lazily,
+    except in fixture/offline mode where the saturation check is skipped entirely (no
+    network call, per the module docstring).
     Returns (sources, notes)."""
     in_fixture = _load_fixture() is not None
     pool_size = int(os.environ.get("ALI_POOL_SIZE", "40"))
@@ -976,6 +1006,10 @@ def source_products(
     notes: list[str] = []
     failed_gates = 0
     seen = 0
+    check_saturation = ebay_client is not None or not in_fixture
+    if check_saturation and ebay_client is None:
+        from ebay_common import EbayClient
+        ebay_client = EbayClient()
 
     # Gather a pool first — appeal ranking needs choices, not the first two hits.
     target = needed if in_fixture else max(needed, pool_size)
@@ -1071,6 +1105,20 @@ def source_products(
             except AliError as exc:
                 notes.append(f"[card] {exc}")
                 continue
+            if check_saturation:
+                try:
+                    active_count = ebay_client.active_listing_count(listing_title(flat["title"]))
+                except Exception as exc:  # ApiError / UnknownOutcome from ebay_common
+                    # Browse API being briefly unavailable shouldn't block a candidate
+                    # that already cleared every AliExpress gate — skip, don't reject.
+                    notes.append(f"[ebay-saturation {product_id}] check unavailable: {exc}")
+                else:
+                    reason = ebay_saturation_reason(active_count)
+                    source["ebay_active_listings"] = active_count
+                    if reason is not None:
+                        failed_gates += 1
+                        notes.append(f"[ebay-saturation {product_id}] {reason} (active={active_count})")
+                        continue
             # Raw bestseller signals for deterministic ranking (rank_pool). Kept off
             # source.json — stripped before the record is returned.
             source["_signals"] = {

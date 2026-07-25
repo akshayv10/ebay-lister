@@ -30,13 +30,16 @@ def test_publishing_is_gated_on_live_flag() -> None:
     assert dry_index < import_index, "the dry-run early return must precede any eBay call"
 
 
-def test_workflow_has_no_active_schedule() -> None:
+def test_workflow_schedule_is_exactly_9am_ist() -> None:
+    # Automation is intentionally live (user-approved): daily at 09:00 IST = 03:30 UTC,
+    # no DST in IST. A schedule change here must be a deliberate edit, not a drift.
     text = WORKFLOW.read_text(encoding="utf-8")
     active_schedule = [
         line for line in text.splitlines()
         if re.match(r"^\s*-\s*cron:", line) and not line.lstrip().startswith("#")
     ]
-    assert not active_schedule, f"automation must stay paused, found: {active_schedule}"
+    assert len(active_schedule) == 1, f"expected exactly one active schedule, found: {active_schedule}"
+    assert '"30 3 * * *"' in active_schedule[0], f"expected 09:00 IST (30 3 * * *), found: {active_schedule}"
 
 
 def test_workflow_defaults_to_full_mode() -> None:
