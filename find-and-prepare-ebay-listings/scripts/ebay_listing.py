@@ -342,7 +342,7 @@ def prepare_product(client: EbayClient, config: dict[str, Any], result_path: Pat
     for image_url in source["source_images"]:
         try:
             eps_urls.append(eps_image(client, image_url))
-        except EbayError as exc:
+        except (EbayError, ValueError) as exc:
             failures.append(str(exc))
     if not eps_urls:
         raise EbayError("Every selected product image failed eBay Picture Services import")
@@ -492,6 +492,126 @@ def prepare(run_dir: Path, client: EbayClient) -> dict[str, Any]:
             raise
         result_paths.append(result_path)
     return build_review(result_paths, run_dir / "run-result.json", run_dir / "review.md")
+
+
+def _independent_review(run_dir: Path, results: list[dict[str, Any]]) -> dict[str, Any]:
+    prepared = [item for item in results if item.get("status") == "api_prepared"]
+    reconciliation = [item for item in results if item.get("status") == "reconciliation_required"]
+    if len(prepared) == 2:
+        status = "api_prepared"
+    elif prepared:
+        status = "api_prepared_partial"
+    elif reconciliation:
+        status = "reconciliation_required"
+    else:
+        status = "blocked"
+    payload = {
+        "mode": "ebay_api_handoff",
+        "status": status,
+        "run_id": run_dir.name,
+        "product_count": len(results),
+        "prepared_count": len(prepared),
+        "published": False,
+        "publish_allowed": False,
+        "products": results,
+    }
+    write_json(run_dir / "run-result.json", payload)
+    lines = [
+        "# eBay API handoff review — unpublished offers",
+        "",
+        f"Run ID: `{run_dir.name}`",
+        "",
+        "Nothing is live. Publishing requires a separate explicit instruction and this exact run ID.",
+        "",
+        "| Product | Status | Source | Offer / blocker | Price |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for result in results:
+        title = result.get("listing_title") or result.get("source_title") or result.get("product_id")
+        source = result.get("aliexpress_url", "")
+        if result.get("status") == "api_prepared":
+            offers = "<br>".join(
+                f"`{item.get('sku', '')}` / `{item.get('offer_id', '')}`"
+                for item in result.get("api", {}).get("offers", [])
+            )
+            prices = "<br>".join(
+                f"{item.get('id', 'variant')}: USD {item.get('expected_ebay_price', '')}"
+                for item in result.get("selected_variants", [])
+            )
+            detail = offers
+        else:
+            detail = str(result.get("blocked_reason") or result.get("publish_error") or "Not prepared")
+            prices = "—"
+        lines.append(
+            f"| {title} | `{result.get('status', 'unknown')}` | [AliExpress]({source}) | {detail} | {prices} |"
+        )
+    lines.extend(
+        [
+            "",
+            f"Prepared products: **{len(prepared)} of {len(results)}**.",
+            "",
+            "Each prepared product may be published independently. A failed sibling does not roll back a verified live listing.",
+            "",
+            f"To publish later, explicitly approve this run ID: `{run_dir.name}`.",
+        ]
+    )
+    (run_dir / "review.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return payload
+
+
+def prepare_independent(run_dir: Path, client: EbayClient) -> dict[str, Any]:
+    """Prepare either or both handoff products without letting one failure erase its sibling."""
+    product_dirs = sorted(path for path in run_dir.glob("product-*") if path.is_dir())
+    if len(product_dirs) != 2:
+        raise EbayError("Handoff run must contain exactly two product directories")
+
+    identities: list[str] = []
+    for product_dir in product_dirs:
+        source_path = product_dir / "source.json"
+        result_path = product_dir / "result.json"
+        value = read_json(source_path if source_path.exists() else result_path)
+        identities.append(str(value.get("product_id", "")))
+    if not all(identities) or len(set(identities)) != 2:
+        raise EbayError("Handoff products must have two distinct product IDs")
+
+    valid_source_dirs: set[Path] = set()
+    for product_dir in product_dirs:
+        source_path = product_dir / "source.json"
+        if not source_path.exists():
+            continue
+        try:
+            normalize_source(read_json(source_path))
+            valid_source_dirs.add(product_dir)
+        except (EbayError, ValueError) as exc:
+            failed = read_json(source_path)
+            failed["status"] = "blocked"
+            failed["blocked_reason"] = str(exc)
+            failed["published"] = False
+            failed["publish_allowed"] = False
+            write_json(product_dir / "result.json", failed)
+    config = require_setup(client) if valid_source_dirs else {}
+    results: list[dict[str, Any]] = []
+    for product_dir in product_dirs:
+        source_path = product_dir / "source.json"
+        result_path = product_dir / "result.json"
+        if product_dir not in valid_source_dirs:
+            results.append(read_json(result_path))
+            continue
+        try:
+            initialize_result(source_path, result_path)
+            result = read_json(result_path)
+            result["status"] = "payload_validated"
+            write_json(result_path, result)
+            results.append(prepare_product(client, config, result_path))
+        except EbayError as exc:
+            failed = read_json(result_path) if result_path.exists() else read_json(source_path)
+            failed["status"] = "reconciliation_required" if isinstance(exc, UnknownOutcome) else "blocked"
+            failed["blocked_reason"] = str(exc)
+            failed["published"] = False
+            failed["publish_allowed"] = False
+            write_json(result_path, failed)
+            results.append(failed)
+    return _independent_review(run_dir, results)
 
 
 def listing_id_from_publish(response: Any) -> str:
@@ -778,6 +898,162 @@ def publish(run_dir: Path, confirm_run_id: str, client: EbayClient, history_path
     return run
 
 
+def _write_independent_product_result(run_dir: Path, product: dict[str, Any]) -> None:
+    product_id = str(product.get("product_id", ""))
+    for product_dir in sorted(run_dir.glob("product-*")):
+        source_path = product_dir / "source.json"
+        result_path = product_dir / "result.json"
+        candidate = result_path if result_path.exists() else source_path
+        if candidate.exists() and str(read_json(candidate).get("product_id", "")) == product_id:
+            write_json(result_path, product)
+            return
+
+
+def _validate_reviewed_product(client: EbayClient, product: dict[str, Any]) -> None:
+    offers = product.get("api", {}).get("offers", [])
+    if not offers:
+        raise EbayError("Prepared product has no offers")
+    for offer in offers:
+        readback = client.request("GET", f"/sell/inventory/v1/offer/{offer['offer_id']}").data
+        if not isinstance(readback, dict) or str(readback.get("sku", "")) != offer["sku"]:
+            raise EbayError("Offer changed or disappeared after review; prepare again")
+        if reviewed_offer_changed(offer, readback):
+            raise EbayError("Offer settings changed after review; prepare again")
+        listing = readback.get("listing", {}) if isinstance(readback.get("listing"), dict) else {}
+        if readback.get("listingId") or listing.get("listingId"):
+            raise EbayError("A prepared offer is already published; reconcile before continuing")
+
+
+def _recover_ad_id(client: EbayClient, campaign_id: str, listing_id: str) -> tuple[str, list[str]]:
+    errors: list[str] = []
+    try:
+        matches = [
+            ad for ad in ads_for_campaign(client, campaign_id)
+            if str(ad.get("listingId", "")) == listing_id and ad.get("adId")
+        ]
+        if len(matches) == 1:
+            return str(matches[0]["adId"]), errors
+        if matches:
+            errors.append(f"Could not uniquely identify the General ad for {listing_id}")
+    except EbayError as exc:
+        errors.append(str(exc))
+    return "", errors
+
+
+def publish_independent(
+    run_dir: Path,
+    confirm_run_id: str,
+    client: EbayClient,
+    history_path: Path = HISTORY_PATH,
+) -> dict[str, Any]:
+    """Publish reviewed products independently while preserving exact-run approval."""
+    config = require_setup(client)
+    run_path = run_dir / "run-result.json"
+    run = read_json(run_path)
+    if run.get("status") not in {"api_prepared", "api_prepared_partial"} or run.get("published") is not False:
+        raise EbayError("Only an unpublished handoff run with prepared products can be published")
+    if confirm_run_id != str(run.get("run_id", "")):
+        raise EbayError("Publish confirmation run ID does not match the prepared handoff run")
+    products = run.get("products")
+    if not isinstance(products, list) or len(products) != 2:
+        raise EbayError("Independent publish requires the original two-product review")
+    prepared = [item for item in products if item.get("status") == "api_prepared"]
+    if not prepared:
+        raise EbayError("The handoff run contains no prepared products")
+    all_offers = [offer for product in prepared for offer in product.get("api", {}).get("offers", [])]
+    offer_ids = [str(offer.get("offer_id", "")) for offer in all_offers]
+    skus = [str(offer.get("sku", "")) for offer in all_offers]
+    if not all(offer_ids) or len(set(offer_ids)) != len(offer_ids):
+        raise EbayError("Prepared handoff contains missing or duplicated offer IDs")
+    if not all(skus) or len(set(skus)) != len(skus):
+        raise EbayError("Prepared handoff contains missing or duplicated SKUs")
+
+    run["status"] = "publishing"
+    run["publish_allowed"] = True
+    write_json(run_path, run)
+    live_products: list[dict[str, Any]] = []
+    has_reconciliation = False
+    for product in products:
+        if product.get("status") != "api_prepared":
+            continue
+        entry: dict[str, Any] | None = None
+        try:
+            _validate_reviewed_product(client, product)
+            live = publish_product(client, product)
+            entry = {"product": product, **live, "ad_id": ""}
+            entry["ad_id"] = promote(client, str(config["campaign_id"]), live["listing_id"])
+            if published_listing_id(client, product) != live["listing_id"]:
+                raise EbayError("Live listing readback did not match the published listing ID")
+        except EbayError as exc:
+            cleanup_errors: list[str] = []
+            if entry is not None:
+                if not entry.get("ad_id"):
+                    entry["ad_id"], recovery_errors = _recover_ad_id(
+                        client, str(config["campaign_id"]), entry["listing_id"]
+                    )
+                    cleanup_errors.extend(recovery_errors)
+                cleanup_errors.extend(rollback(client, str(config["campaign_id"]), [entry]))
+            product["status"] = (
+                "reconciliation_required"
+                if isinstance(exc, UnknownOutcome) or cleanup_errors else "publish_failed"
+            )
+            product["published"] = False
+            product["publish_allowed"] = False
+            product["publish_error"] = str(exc)
+            product["rollback_errors"] = cleanup_errors
+            has_reconciliation = has_reconciliation or product["status"] == "reconciliation_required"
+            _write_independent_product_result(run_dir, product)
+            continue
+
+        product["status"] = "live"
+        product["published"] = True
+        product["publish_allowed"] = False
+        product["listing_id"] = entry["listing_id"]
+        product["ebay_url"] = entry["ebay_url"]
+        product["general_promotion"] = {
+            "campaign_id": config["campaign_id"],
+            "ad_id": entry["ad_id"],
+            "bid_percentage": "10.0",
+        }
+        product["priority_promotion_enabled"] = False
+        live_products.append(product)
+        _write_independent_product_result(run_dir, product)
+
+    history_error = ""
+    if live_products:
+        try:
+            write_history_batch(
+                history_path,
+                [
+                    history_record(
+                        product,
+                        {"listing_id": product["listing_id"], "ebay_url": product["ebay_url"]},
+                    )
+                    for product in live_products
+                ],
+            )
+        except (OSError, ValueError) as exc:
+            history_error = str(exc)
+            has_reconciliation = True
+
+    run["products"] = products
+    run["listed_count"] = len(live_products)
+    run["published"] = bool(live_products)
+    run["publish_allowed"] = False
+    if has_reconciliation:
+        run["status"] = "reconciliation_required"
+    elif len(live_products) == 2:
+        run["status"] = "live"
+    elif live_products:
+        run["status"] = "partial"
+    else:
+        run["status"] = "error"
+    if history_error:
+        run["history_error"] = history_error
+    write_json(run_path, run)
+    return run
+
+
 def reconcile(run_dir: Path, client: EbayClient) -> dict[str, Any]:
     run = read_json(run_dir / "run-result.json")
     observations: list[dict[str, Any]] = []
@@ -882,23 +1158,37 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     prepare_parser = sub.add_parser("prepare")
     prepare_parser.add_argument("--run-dir", required=True, type=Path)
+    prepare_independent_parser = sub.add_parser("prepare-independent")
+    prepare_independent_parser.add_argument("--run-dir", required=True, type=Path)
     publish_parser = sub.add_parser("publish")
     publish_parser.add_argument("--run-dir", required=True, type=Path)
     publish_parser.add_argument("--confirm-run-id", required=True)
     publish_parser.add_argument("--history", type=Path, default=HISTORY_PATH)
+    publish_independent_parser = sub.add_parser("publish-independent")
+    publish_independent_parser.add_argument("--run-dir", required=True, type=Path)
+    publish_independent_parser.add_argument("--confirm-run-id", required=True)
+    publish_independent_parser.add_argument("--history", type=Path, default=HISTORY_PATH)
     reconcile_parser = sub.add_parser("reconcile")
     reconcile_parser.add_argument("--run-dir", required=True, type=Path)
+    reconcile_parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     try:
         client = EbayClient()
         if args.command == "prepare":
             payload = prepare(args.run_dir, client)
+        elif args.command == "prepare-independent":
+            payload = prepare_independent(args.run_dir, client)
         elif args.command == "publish":
             payload = publish(args.run_dir, args.confirm_run_id, client, args.history)
+        elif args.command == "publish-independent":
+            payload = publish_independent(run_dir=args.run_dir, confirm_run_id=args.confirm_run_id,
+                                          client=client, history_path=args.history)
         else:
             payload = reconcile(args.run_dir, client)
+            if args.output:
+                write_json(args.output, payload)
         print(json.dumps({"status": payload.get("status"), "run_id": payload.get("run_id", "")}))
-        return 0
+        return 0 if payload.get("status") not in {"blocked", "error", "reconciliation_required"} else 2
     except (EbayError, ApiError, OSError, ValueError, json.JSONDecodeError) as exc:
         print(json.dumps({"status": "error", "error": str(exc)}))
         return 2
