@@ -977,9 +977,12 @@ def source_products(
                 if flat.get("reviews") is None:
                     detail = get_product_detail(product_id)
                     enriched = flatten_detail(detail)
+                    # Take the authoritative rating + review count unconditionally. A
+                    # missing detail rating comes back as 0.0 (and reviews as 0), so it
+                    # must fail the gate rather than fall back to the feed's approximate
+                    # rating — an unverified rating can't be allowed to pass MIN_RATING.
                     flat["reviews"] = enriched.get("reviews")
-                    if enriched.get("rating"):
-                        flat["rating"] = enriched["rating"]
+                    flat["rating"] = enriched.get("rating")
                     reason = gate_reason(flat)
                     if reason is not None:
                         failed_gates += 1
