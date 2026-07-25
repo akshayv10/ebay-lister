@@ -212,6 +212,33 @@ def detail_url(product_id: str) -> str:
     return f"https://www.aliexpress.us/item/{product_id}.html"
 
 
+# AliExpress product-page hosts we accept for on-demand listing.
+ALIEXPRESS_HOSTS = ("aliexpress.com", "aliexpress.us", "aliexpress.ru", "ru.aliexpress.com")
+
+
+def product_id_from_url(url: str) -> str:
+    """Extract the numeric AliExpress product id from a product-page URL.
+
+    Accepts the usual `/item/1005006000000000.html` form (with or without query
+    string, on any AliExpress host). Raises AliError for non-AliExpress links or
+    when no id can be found."""
+    url = (url or "").strip()
+    parsed = urllib.parse.urlsplit(url if "//" in url else "https://" + url)
+    host = parsed.netloc.lower().split("@")[-1].split(":")[0]
+    if not any(host == h or host.endswith("." + h) for h in ALIEXPRESS_HOSTS):
+        raise AliError(f"Not an AliExpress link: {host or url!r}")
+    match = re.search(r"/item/(\d{8,20})", parsed.path) or re.search(r"\d{8,20}", parsed.path)
+    if not match:
+        # some share links carry the id in the query string
+        qs = urllib.parse.parse_qs(parsed.query)
+        for key in ("productId", "product_id", "itemId", "id"):
+            values = qs.get(key)
+            if values and re.fullmatch(r"\d{8,20}", values[0]):
+                return values[0]
+        raise AliError(f"No AliExpress product id found in URL: {url!r}")
+    return match.group(1) if match.lastindex else match.group(0)
+
+
 # --- DS product.get parsing -> flat detail ----------------------------------------
 
 def _find_result(payload: Any) -> dict[str, Any]:
@@ -576,12 +603,21 @@ def listing_title(title: str) -> str:
     return trimmed.strip() or title[:80]
 
 
-def product_to_source(flat: dict[str, Any], niche: str, run_stamp: str, local_date: str) -> dict[str, Any]:
+def product_to_source(flat: dict[str, Any], niche: str, run_stamp: str, local_date: str,
+                      enforce_gates: bool = True) -> dict[str, Any]:
     """Map a flattened DS detail into a validated-shape source.json dict.
-    Raises AliError if the product does not pass the gates."""
+
+    With ``enforce_gates=True`` (the default, used by the daily auto-sourcing) a gate
+    failure raises AliError. With ``enforce_gates=False`` (on-demand links the user
+    hand-picked) the gates are advisory: a failure is not raised here — the caller is
+    expected to have read ``gate_reason(flat)`` and surfaces it as a warning. Even so,
+    a product with no id/title/price/images can't be listed, so those hard failures
+    still raise regardless of ``enforce_gates``."""
     reason = gate_reason(flat)
     if reason is not None:
-        raise AliError(f"Product ineligible: {reason}")
+        hard = not flat.get("id") or not flat.get("title") or flat.get("price") is None or not flat.get("images")
+        if enforce_gates or hard:
+            raise AliError(f"Product ineligible: {reason}")
     product_id = flat["id"]
     title = flat["title"]
     price = flat["price"]

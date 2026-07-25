@@ -40,14 +40,17 @@ def compose(result: dict[str, Any]) -> tuple[str, str, str]:
     niche = str(result.get("niche", ""))
     products = result.get("products", []) or []
     listed = int(result.get("listed_count", sum(1 for p in products if p.get("ebay_url"))))
-    subject = f"{_status_prefix(status)} eBay auto-lister {date}: {listed} of 2 listed"
+    # The daily run always targets 2 products; the on-demand single-URL path sets
+    # expected_count=1 so it isn't reported as "1 of 2 listed".
+    expected = int(result.get("expected_count", 2))
+    subject = f"{_status_prefix(status)} eBay auto-lister {date}: {listed} of {expected} listed"
     if status == "error" and not products:
         subject = f"{_status_prefix('error')} eBay auto-lister {date}: error"
 
     text_lines = [
         f"Daily eBay auto-lister — {date}",
         f"Niche: {niche}",
-        f"Status: {status} ({listed} of 2 listed)",
+        f"Status: {status} ({listed} of {expected} listed)",
         "",
     ]
     for index, product in enumerate(products, 1):
