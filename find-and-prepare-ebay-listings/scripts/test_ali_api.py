@@ -108,7 +108,7 @@ def test_bare_electronics_titles_are_rejected() -> None:
 
 
 def test_blocked_category_rejected() -> None:
-    def card(category: str) -> dict:
+    def card(first_level: str, second_level: str = "") -> dict:
         return {
             "product_id": "1005006000000078",
             "product_title": "Desk Cable Management Tray Organizer",  # no electronics keyword
@@ -116,12 +116,17 @@ def test_blocked_category_rejected() -> None:
             "evaluate_rate": "96.0%",
             "lastest_volume": "300",
             "product_main_image_url": "https://x/main.jpg",
-            "first_level_category_name": category,
+            "first_level_category_name": first_level,
+            "second_level_category_name": second_level,
         }
 
-    assert ali_api.gate_reason(ali_api.flatten_card(card("Computer & Office"))) == "blocked category"
-    # A niche's own category must not be blocked.
+    assert ali_api.gate_reason(ali_api.flatten_card(card("Electronic Components & Supplies"))) == "blocked category"
+    # A niche's own top-level category must not be blocked.
     assert ali_api.gate_reason(ali_api.flatten_card(card("Home & Garden"))) is None
+    # A second-level like "Beauty Tools" must NOT trip the "tools" block (exact top-level match).
+    assert ali_api.gate_reason(ali_api.flatten_card(card("Beauty & Health", "Beauty Tools"))) is None
+    # "Computer & Office" is no longer a blanket block (legit phone/computer accessories pass).
+    assert ali_api.gate_reason(ali_api.flatten_card(card("Computer & Office"))) is None
 
 
 def test_string_list_reads_feed_image_key() -> None:

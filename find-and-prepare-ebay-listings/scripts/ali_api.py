@@ -177,13 +177,14 @@ ELECTRONICS_TERMS = {
     "buck converter",
 }
 
-# AliExpress category names (lowercased substrings) that are electronics/parts-heavy and
-# off-niche for every target niche. Deliberately conservative so it never blocks a niche's
-# own category (lights & lighting, home improvement, cellphones & telecommunications,
-# beauty & health, automobiles & motorcycles, toys & hobbies).
+# AliExpress FIRST-LEVEL category names that are off-niche for every target niche. Matched
+# by exact (normalized) equality against the card's top-level category only — NOT a loose
+# substring — so a second-level like "Beauty Tools" under "Beauty & Health" is never caught.
+# Deliberately narrow: excludes "Computer & Office" (the Smartphone Accessories niche sources
+# legit accessories from a computer-accessories feed) and "Tools" (overlaps Home Improvement);
+# the specific bad items in those categories are caught by ELECTRONICS_TERMS instead.
 BLOCKED_CATEGORIES = {
-    "computer & office", "electronic components & supplies",
-    "security & protection", "tools",
+    "electronic components & supplies", "security & protection",
 }
 
 
@@ -532,8 +533,9 @@ def flatten_card(card: dict[str, Any]) -> dict[str, Any]:
         images.append(_https(url))
     seen: set[str] = set()
     unique = [u for u in images if u.startswith("https://") and not (u in seen or seen.add(u))]
-    category = " ".join(_first_str(card.get(key)) for key in (
-        "first_level_category_name", "second_level_category_name")).strip()
+    # Top-level category only — the off-niche electronics gate matches it exactly, so a
+    # second-level like "Beauty Tools" must not leak into the value.
+    category = _first_str(card.get("first_level_category_name"))
     return {
         "id": pid_match.group(0) if pid_match else "",
         "title": _first_str(card.get("product_title") or card.get("title") or card.get("subject")),
@@ -598,9 +600,11 @@ def is_bare_electronics(title: str) -> bool:
 
 
 def category_blocked(category: str) -> bool:
-    """True when the AliExpress category is an off-niche electronics/parts category."""
-    lowered = (category or "").casefold()
-    return bool(lowered) and any(blocked in lowered for blocked in BLOCKED_CATEGORIES)
+    """True when the AliExpress first-level category is an off-niche electronics/parts one.
+    Exact (whitespace-normalized) match, so second-level names like "Beauty Tools" that merely
+    contain a blocked word are never caught."""
+    lowered = re.sub(r"\s+", " ", (category or "").casefold()).strip()
+    return lowered in BLOCKED_CATEGORIES
 
 
 def gate_reason(flat: dict[str, Any]) -> str | None:
