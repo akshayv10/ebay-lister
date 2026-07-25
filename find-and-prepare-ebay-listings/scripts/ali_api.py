@@ -926,13 +926,14 @@ def source_products(
         return len(accepted) >= target
 
     feeds = ["fixture"] if in_fixture else niche_feeds(niche)
-    # Review count + authoritative rating come from ds.product.get, which needs a seller
-    # token. Without it, every feed candidate fails the enrichment step and nothing lists.
+    # The authoritative review count + rating come from ds.product.get, which needs a seller
+    # token. Without one the run still lists from feed data (orders + approximate rating);
+    # only the review-count gate is skipped. Set the token to enforce it.
     if not in_fixture and not access_token():
         notes.append(
-            "WARNING: ALIEXPRESS_ACCESS_TOKEN is not set — review/rating cannot be "
-            "verified, so every candidate will be rejected. Mint a token with "
-            "mint_ali_token.py and set the ALIEXPRESS_ACCESS_TOKEN secret."
+            "NOTE: ALIEXPRESS_ACCESS_TOKEN is not set — sourcing on feed data only "
+            "(orders + approximate rating); the review-count gate is skipped. Mint a token "
+            "with mint_ali_token.py and set the ALIEXPRESS_ACCESS_TOKEN secret to enforce it."
         )
     max_pages = 1 if in_fixture else min(24, len(feeds) * 4)
     consecutive_empty = 0
@@ -970,11 +971,12 @@ def source_products(
                 }
                 if _duplicate(view, history, accepted_views):
                     continue
-                # Feed cards omit the review count (flat["reviews"] is None). Fetch the
-                # authoritative rating + review count via ds.product.get so those gates are
-                # enforced for real, then re-gate. A failed/absent detail call (e.g. no
-                # seller token) means the criteria can't be verified — reject the candidate.
-                if flat.get("reviews") is None:
+                # Feed cards omit the review count (flat["reviews"] is None). When a seller
+                # token is available, fetch the authoritative rating + review count via
+                # ds.product.get and re-gate so those criteria are enforced for real. Without
+                # a token the enrichment is skipped and the candidate is gated on feed data
+                # alone (orders + approximate rating); the review-count gate is not applied.
+                if access_token() and flat.get("reviews") is None:
                     detail = get_product_detail(product_id)
                     enriched = flatten_detail(detail)
                     # Take the authoritative rating + review count unconditionally. A
