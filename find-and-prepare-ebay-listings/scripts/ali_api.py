@@ -1043,6 +1043,12 @@ def source_products(
                     # rating — an unverified rating can't be allowed to pass MIN_RATING.
                     flat["reviews"] = enriched.get("reviews")
                     flat["rating"] = enriched.get("rating")
+                    # The detail response also carries the full product gallery
+                    # (ae_multimedia_info_dto.image_urls), which is usually richer
+                    # than the feed card's main + small image URLs. Reuse it here
+                    # since we already spent the token call for rating/reviews.
+                    if enriched.get("images"):
+                        flat["images"] = enriched["images"]
                     reason = gate_reason(flat)
                     if reason is not None:
                         failed_gates += 1
