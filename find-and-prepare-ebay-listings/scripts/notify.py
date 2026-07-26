@@ -33,8 +33,10 @@ def compose(result: dict[str, Any]) -> tuple[str, str, str]:
     """Return (subject, text_body, html_body) from a daily-run result dict.
 
     Expected keys: status ('listed'|'partial'|'error'), date, niche,
-    products (list of {title, aliexpress_url, ebay_url, price, listing_id}),
-    listed_count, error (optional), notes (optional list)."""
+    products (list of {title, aliexpress_url, ebay_url, price, ebay_price,
+    listing_id}), listed_count, error (optional), notes (optional list).
+    ``price`` is the AliExpress source cost; ``ebay_price`` is the actual
+    eBay listing price (blank for dry runs, where nothing was listed yet)."""
     status = str(result.get("status", "error"))
     date = str(result.get("date", ""))
     niche = str(result.get("niche", ""))
@@ -57,6 +59,8 @@ def compose(result: dict[str, Any]) -> tuple[str, str, str]:
         text_lines.append(f"Product {index}: {product.get('title', '(untitled)')}")
         if product.get("price"):
             text_lines.append(f"  Price: USD {product['price']}")
+        if product.get("ebay_price"):
+            text_lines.append(f"  eBay price: USD {product['ebay_price']}")
         text_lines.append(f"  AliExpress: {product.get('aliexpress_url', '(n/a)')}")
         if product.get("ebay_url"):
             text_lines.append(f"  eBay: {product['ebay_url']}")
@@ -102,9 +106,12 @@ def compose(result: dict[str, Any]) -> tuple[str, str, str]:
             f'<a href="{html.escape(ebay)}">{html.escape(ebay)}</a>' if ebay
             else f'<span style="color:#b00">NOT LISTED — {html.escape(str(product.get("reason", "")))}</span>'
         )
+        ebay_price = product.get("ebay_price", "")
+        ebay_price_cell = f"USD {html.escape(str(ebay_price))}" if ebay_price else ""
         rows.append(
             f"<tr><td>{index}</td><td>{html.escape(product.get('title',''))}</td>"
             f"<td>USD {html.escape(str(product.get('price','')))}</td>"
+            f"<td>{ebay_price_cell}</td>"
             f'<td><a href="{ali}">AliExpress</a></td><td>{ebay_cell}</td></tr>'
         )
     spend_html = f"<p style='color:#555'>{html.escape(spend_line)}</p>" if spend_line else ""
@@ -124,7 +131,7 @@ def compose(result: dict[str, Any]) -> tuple[str, str, str]:
         f"<p>Niche: <b>{html.escape(niche)}</b> · Status: <b>{html.escape(status)}</b> "
         f"({listed} of 2 listed)</p>"
         "<table border='1' cellpadding='6' cellspacing='0'>"
-        "<tr><th>#</th><th>Title</th><th>Price</th><th>Source</th><th>eBay listing</th></tr>"
+        "<tr><th>#</th><th>Title</th><th>Price</th><th>eBay Price</th><th>Source</th><th>eBay listing</th></tr>"
         + "".join(rows)
         + "</table>"
         + spend_html

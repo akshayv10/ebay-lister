@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import daily_run
 import notify
 
 
@@ -36,6 +37,59 @@ def test_sheet_sync_queue_error_is_visible() -> None:
     })
     assert "Sync error: temporary outage" in text
     assert "Sync error: temporary outage" in html
+
+
+def test_ebay_price_shown_when_listed() -> None:
+    _, text, html = notify.compose({
+        "date": "2026-07-26",
+        "status": "listed",
+        "niche": "Test",
+        "listed_count": 1,
+        "products": [{
+            "title": "Test Product",
+            "aliexpress_url": "https://aliexpress.com/item/1.html",
+            "ebay_url": "https://www.ebay.com/itm/123",
+            "price": "12.99",
+            "ebay_price": "24.99",
+            "listing_id": "123",
+        }],
+    })
+    assert "eBay price: USD 24.99" in text
+    assert "USD 24.99" in html
+    assert "eBay Price" in html
+
+
+def test_ebay_price_absent_for_dry_run_product() -> None:
+    _, text, html = notify.compose({
+        "date": "2026-07-26",
+        "status": "partial",
+        "niche": "Test",
+        "listed_count": 0,
+        "products": [{
+            "title": "Test Product",
+            "aliexpress_url": "https://aliexpress.com/item/1.html",
+            "price": "12.99",
+            "reason": "dry run",
+        }],
+    })
+    assert "eBay price:" not in text
+
+
+def test_listed_summaries_reads_expected_ebay_price() -> None:
+    products = [{
+        "product_id": "1",
+        "listing_title": "Test Product",
+        "aliexpress_url": "https://aliexpress.com/item/1.html",
+        "ebay_url": "https://www.ebay.com/itm/123",
+        "listing_id": "123",
+        "selected_variants": [{
+            "visible_item_price": "12.99",
+            "expected_ebay_price": "24.99",
+        }],
+    }]
+    summaries = daily_run.listed_summaries(products)
+    assert summaries[0]["price"] == "12.99"
+    assert summaries[0]["ebay_price"] == "24.99"
 
 
 def _run_all() -> int:

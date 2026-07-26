@@ -88,6 +88,7 @@ def listed_summaries(products: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "title": product.get("listing_title"),
             "aliexpress_url": product.get("aliexpress_url"),
             "price": variant.get("visible_item_price", ""),
+            "ebay_price": variant.get("expected_ebay_price", ""),
             "ebay_url": product.get("ebay_url", ""),
             "listing_id": product.get("listing_id", ""),
         })
