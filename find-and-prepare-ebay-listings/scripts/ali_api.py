@@ -63,8 +63,11 @@ MIN_RATING = float(os.environ.get("ALI_MIN_RATING", "4.5"))
 MIN_REVIEWS = int(os.environ.get("ALI_MIN_REVIEWS", "50"))
 MIN_ORDERS = int(os.environ.get("ALI_MIN_ORDERS", "250"))
 # Free eBay Browse API saturation proxy (no sold-item data available without the
-# limited-release Marketplace Insights API — see module docstring).
-MAX_ACTIVE_LISTINGS = int(os.environ.get("ALI_MAX_ACTIVE_LISTINGS", "500"))
+# limited-release Marketplace Insights API — see module docstring). A few hundred
+# active listings is normal for almost any real eBay category, so the threshold is
+# set high enough to only catch genuinely flooded markets; uncalibrated, revisit as
+# more real run data comes in.
+MAX_ACTIVE_LISTINGS = int(os.environ.get("ALI_MAX_ACTIVE_LISTINGS", "5000"))
 MIN_PRICE_USD = Decimal(os.environ.get("ALI_MIN_PRICE_USD", "10"))
 # Delivered-cost estimate used only when freight lookup is unavailable/failed.
 SHIP_PCT = Decimal(os.environ.get("ALI_SHIPPING_PCT", "0"))
