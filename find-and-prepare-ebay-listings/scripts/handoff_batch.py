@@ -18,7 +18,7 @@ from ebay_common import write_json
 from listing_job import canonical_source_url, normalize_source
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSIONS = {1, 2}
 MAX_DISPATCH_INPUT = 65_535
 
 
@@ -82,6 +82,9 @@ def _batch_material(payload: dict[str, Any]) -> dict[str, Any]:
             {
                 "product_id": item["product_id"],
                 "options": item["selected_variant"]["options"],
+                "image_hashes": [
+                    image["sha256"] for image in item.get("media", {}).get("images", [])
+                ],
             }
             for item in payload["products"]
         ),
@@ -101,11 +104,66 @@ def batch_id_for(payload: dict[str, Any]) -> str:
     return f"frp-{date_part}-{digest}"
 
 
+def _media(value: Any, field: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise HandoffError(f"{field} must be an object")
+    images = value.get("images")
+    if not isinstance(images, list) or not 1 <= len(images) <= 24:
+        raise HandoffError(f"{field}.images must contain 1 to 24 EPS images")
+    clean: list[dict[str, Any]] = []
+    hashes: set[str] = set()
+    orders: set[int] = set()
+    for index, image in enumerate(images, 1):
+        if not isinstance(image, dict):
+            raise HandoffError(f"{field}.images[{index}] must be an object")
+        digest = str(image.get("sha256") or "").strip().casefold()
+        if not re.fullmatch(r"[a-f0-9]{64}", digest) or digest in hashes:
+            raise HandoffError(f"{field}.images[{index}].sha256 must be unique hexadecimal SHA-256")
+        eps_url = _text(image.get("eps_url"), f"{field}.images[{index}].eps_url")
+        if not eps_url.startswith("https://"):
+            raise HandoffError(f"{field}.images[{index}].eps_url must use HTTPS")
+        order = int(_number(image.get("order"), f"{field}.images[{index}].order"))
+        if order < 1 or order in orders:
+            raise HandoffError(f"{field}.images[{index}].order must be unique and positive")
+        role = str(image.get("role") or "main").strip().casefold()
+        if role not in {"main", "variant", "description"}:
+            raise HandoffError(f"{field}.images[{index}].role is unsupported")
+        options = _variant_options(
+            image.get("variant_options", {}),
+            f"{field}.images[{index}].variant_options",
+        )
+        hashes.add(digest)
+        orders.add(order)
+        clean.append(
+            {
+                "sha256": digest,
+                "eps_image_id": _text(image.get("eps_image_id"), f"{field}.images[{index}].eps_image_id"),
+                "eps_url": eps_url,
+                "role": role,
+                "order": order,
+                "variant_options": options,
+            }
+        )
+    clean.sort(key=lambda item: item["order"])
+    return {
+        "source": "alisave_all",
+        "media_manifest_hash": _text(value.get("media_manifest_hash"), f"{field}.media_manifest_hash"),
+        "downloaded_count": int(_number(value.get("downloaded_count", len(images)), f"{field}.downloaded_count")),
+        "accepted_count": int(_number(value.get("accepted_count", len(images)), f"{field}.accepted_count")),
+        "uploaded_count": int(_number(value.get("uploaded_count", len(images)), f"{field}.uploaded_count")),
+        "attached_count": len(clean),
+        "video_excluded_count": int(_number(value.get("video_excluded_count", 0), f"{field}.video_excluded_count")),
+        "upload_failures": list(value.get("upload_failures", [])) if isinstance(value.get("upload_failures", []), list) else [],
+        "images": clean,
+    }
+
+
 def validate_envelope(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise HandoffError("Handoff payload must be a JSON object")
-    if int(value.get("schema_version", 0)) != SCHEMA_VERSION:
-        raise HandoffError(f"schema_version must be {SCHEMA_VERSION}")
+    schema_version = int(value.get("schema_version", 0))
+    if schema_version not in SCHEMA_VERSIONS:
+        raise HandoffError("schema_version must be 1 or 2")
     local_date = _text(value.get("local_calendar_date"), "local_calendar_date")
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", local_date):
         raise HandoffError("local_calendar_date must be YYYY-MM-DD")
@@ -143,8 +201,7 @@ def validate_envelope(value: Any) -> dict[str, Any]:
             checkout = f"{_money(checkout, f'products[{index}].selected_variant.checkout_total'):.2f}"
         else:
             checkout = ""
-        products.append(
-            {
+        normalized_product = {
                 "product_id": product_id,
                 "aliexpress_url": url,
                 "product_title": _text(raw.get("product_title"), f"products[{index}].product_title"),
@@ -172,7 +229,9 @@ def validate_envelope(value: Any) -> dict[str, Any]:
                 },
                 "material_risk": str(raw.get("material_risk") or "").strip(),
             }
-        )
+        if schema_version == 2:
+            normalized_product["media"] = _media(raw.get("media"), f"products[{index}].media")
+        products.append(normalized_product)
 
     if len({item["product_id"] for item in products}) != 2:
         raise HandoffError("The two handoff products must be distinct")
@@ -180,11 +239,13 @@ def validate_envelope(value: Any) -> dict[str, Any]:
         raise HandoffError("The two handoff products must be functionally distinct")
 
     normalized = {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": schema_version,
         "local_calendar_date": local_date,
         "assigned_niche": niche,
         "products": products,
     }
+    if schema_version == 2:
+        normalized["publish_mode"] = "immediate"
     expected = batch_id_for(normalized)
     supplied_batch = str(value.get("batch_id") or "").strip()
     if supplied_batch and supplied_batch != expected:
@@ -293,6 +354,19 @@ def source_from_product(product: dict[str, Any], payload: dict[str, Any]) -> dic
         "us_region_confirmed": True,
         "material_risk": product["material_risk"],
     }
+    if payload["schema_version"] == 2:
+        media = product["media"]
+        # Multi-variation listings are capped at 12 images per variation. Keep the
+        # ordered AliSave gallery; per-variation matching is applied during preparation.
+        source["source_images"] = [item["eps_url"] for item in media["images"][:12]]
+        source["media"] = media
+        matching = [
+            item["eps_url"] for item in media["images"]
+            if item["variant_options"]
+            and _options_match(product["selected_variant"]["options"], item["variant_options"])
+        ]
+        if matching:
+            source["selected_variants"][0]["eps_images"] = matching[:12]
     normalize_source(source)
     return source
 

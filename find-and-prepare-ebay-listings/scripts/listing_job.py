@@ -122,6 +122,8 @@ def normalize_source(source: dict[str, Any], min_visible_price: Decimal = ali_ap
     if not isinstance(images, list) or not 1 <= len(images) <= 24:
         raise JobError("source_images must contain 1 to 24 verified HTTPS image URLs")
     normalized["source_images"] = list(dict.fromkeys(https_url(item, "source_images") for item in images))
+    if isinstance(source.get("media"), dict):
+        normalized["media"] = source["media"]
 
     variants = source.get("selected_variants")
     if not isinstance(variants, list) or not 1 <= len(variants) <= 4:
@@ -165,6 +167,13 @@ def normalize_source(source: dict[str, Any], min_visible_price: Decimal = ali_ap
         # Optional per-variation photo, so eBay swaps the image with the selection.
         if str(item.get("image", "")).strip():
             record["image"] = https_url(item["image"], f"{variant_id}.image")
+        eps_images = item.get("eps_images", [])
+        if eps_images:
+            if not isinstance(eps_images, list) or len(eps_images) > 12:
+                raise JobError(f"{variant_id}.eps_images must contain at most 12 HTTPS URLs")
+            record["eps_images"] = list(
+                dict.fromkeys(https_url(url, f"{variant_id}.eps_images") for url in eps_images)
+            )
         normalized_variants.append(record)
     if len(normalized_variants) > 1:
         if len(normalized["source_images"]) > 12:

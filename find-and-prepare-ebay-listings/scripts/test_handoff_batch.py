@@ -73,6 +73,35 @@ def envelope() -> dict:
     return value
 
 
+def immediate_envelope() -> dict:
+    value = envelope()
+    value.pop("batch_id", None)
+    value["schema_version"] = 2
+    for index, item in enumerate(value["products"], 1):
+        item["media"] = {
+            "source": "alisave_all",
+            "media_manifest_hash": f"{index}" * 64,
+            "downloaded_count": 31,
+            "accepted_count": 12,
+            "uploaded_count": 12,
+            "attached_count": 12,
+            "video_excluded_count": 1,
+            "upload_failures": [],
+            "images": [
+                {
+                    "sha256": f"{number:x}".rjust(64, str(index)),
+                    "eps_image_id": f"image-{index}-{number}",
+                    "eps_url": f"https://i.ebayimg.com/images/g/{index}-{number}/s-l1600.jpg",
+                    "role": "main" if number == 1 else "description",
+                    "order": number,
+                    "variant_options": {},
+                }
+                for number in range(1, 13)
+            ],
+        }
+    return value
+
+
 def test_deterministic_batch_id_ignores_product_order() -> None:
     first = handoff_batch.validate_envelope(envelope())
     reversed_payload = envelope()
@@ -107,6 +136,31 @@ def test_decode_rejects_oversized_input() -> None:
     except handoff_batch.HandoffError:
         return
     raise AssertionError("Oversized dispatch input unexpectedly passed")
+
+
+def test_schema_v2_requires_eps_media_and_gallery_changes_batch_id() -> None:
+    first = handoff_batch.validate_envelope(immediate_envelope())
+    assert first["publish_mode"] == "immediate"
+    changed = immediate_envelope()
+    changed["products"][0]["media"]["images"][0]["sha256"] = "f" * 64
+    second = handoff_batch.validate_envelope(changed)
+    assert first["batch_id"] != second["batch_id"]
+    invalid = immediate_envelope()
+    invalid["products"][0].pop("media")
+    try:
+        handoff_batch.validate_envelope(invalid)
+    except handoff_batch.HandoffError:
+        return
+    raise AssertionError("Schema v2 without media unexpectedly passed")
+
+
+def test_schema_v2_source_uses_uploaded_eps_gallery() -> None:
+    payload = handoff_batch.validate_envelope(immediate_envelope())
+    with patch("handoff_batch.ali_api.get_product_detail", return_value=fixture()[0]), \
+         patch("handoff_batch.ali_api.freight", return_value=Decimal("2.00")):
+        source = handoff_batch.source_from_product(payload["products"][0], payload)
+    assert source["source_images"][0].startswith("https://i.ebayimg.com/")
+    assert source["media"]["source"] == "alisave_all"
 
 
 def test_source_refetches_current_price_and_keeps_exact_product() -> None:

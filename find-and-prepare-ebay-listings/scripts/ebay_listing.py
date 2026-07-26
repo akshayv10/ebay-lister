@@ -126,6 +126,20 @@ def enrich_source_with_variants(source_path: Path) -> bool:
     images = source.get("source_images") or []
     if len(images) > 12:
         source["source_images"] = images[:12]
+    media = source.get("media", {})
+    media_images = media.get("images", []) if isinstance(media, dict) else []
+    for record in records:
+        matches = [
+            item["eps_url"] for item in media_images
+            if isinstance(item, dict)
+            and item.get("variant_options")
+            and all(
+                str(record["options"].get(name, "")).casefold() == str(value).casefold()
+                for name, value in item["variant_options"].items()
+            )
+        ]
+        if matches:
+            record["eps_images"] = matches[:12]
     source["selected_variants"] = records
     write_json(source_path, source)
     return True
@@ -339,11 +353,15 @@ def prepare_product(client: EbayClient, config: dict[str, Any], result_path: Pat
     category_id, normalized_aspects, missing = category_and_aspects(client, source)
     eps_urls: list[str] = []
     failures: list[str] = []
-    for image_url in source["source_images"]:
-        try:
-            eps_urls.append(eps_image(client, image_url))
-        except (EbayError, ValueError) as exc:
-            failures.append(str(exc))
+    supplied_eps = source.get("media", {}).get("images", []) if isinstance(source.get("media"), dict) else []
+    if supplied_eps:
+        eps_urls = [str(item["eps_url"]) for item in supplied_eps[:12]]
+    else:
+        for image_url in source["source_images"]:
+            try:
+                eps_urls.append(eps_image(client, image_url))
+            except (EbayError, ValueError) as exc:
+                failures.append(str(exc))
     if not eps_urls:
         raise EbayError("Every selected product image failed eBay Picture Services import")
 
@@ -353,8 +371,8 @@ def prepare_product(client: EbayClient, config: dict[str, Any], result_path: Pat
         aspects = {**normalized_aspects, **{name: [value] for name, value in variant["options"].items()}}
         # Lead with this variation's own photo so eBay swaps the image with the selection;
         # a failed import just falls back to the shared gallery.
-        variant_images = eps_urls
-        if variant.get("image"):
+        variant_images = list(dict.fromkeys((variant.get("eps_images") or []) + eps_urls))[:12]
+        if variant.get("image") and not variant.get("eps_images"):
             try:
                 variant_images = [eps_image(client, variant["image"])] + [
                     url for url in eps_urls if url != variant.get("_eps")
@@ -452,6 +470,7 @@ def prepare_product(client: EbayClient, config: dict[str, Any], result_path: Pat
         "normalized_aspects": normalized_aspects,
         "eps_image_urls": eps_urls,
         "image_import_failures": failures,
+        "media": source.get("media", {}),
         "inventory_items": inventory_records,
         "inventory_item_group": group_record,
         "offers": offer_records,
@@ -545,6 +564,7 @@ def _independent_review(run_dir: Path, results: list[dict[str, Any]]) -> dict[st
         lines.append(
             f"| {title} | `{result.get('status', 'unknown')}` | [AliExpress]({source}) | {detail} | {prices} |"
         )
+    immediate = any(isinstance(item.get("media"), dict) and item["media"] for item in results)
     lines.extend(
         [
             "",
@@ -552,7 +572,11 @@ def _independent_review(run_dir: Path, results: list[dict[str, Any]]) -> dict[st
             "",
             "Each prepared product may be published independently. A failed sibling does not roll back a verified live listing.",
             "",
-            f"To publish later, explicitly approve this run ID: `{run_dir.name}`.",
+            (
+                f"Immediate-list mode will publish this exact run ID in the same Action: `{run_dir.name}`."
+                if immediate
+                else f"To publish later, explicitly approve this run ID: `{run_dir.name}`."
+            ),
         ]
     )
     (run_dir / "review.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -580,6 +604,11 @@ def prepare_independent(run_dir: Path, client: EbayClient) -> dict[str, Any]:
         if not source_path.exists():
             continue
         try:
+            source_value = read_json(source_path)
+            if isinstance(source_value.get("media"), dict) and source_value["media"]:
+                # Schema-v2 immediate listing may expand the exact reviewed SKU into up
+                # to four currently valid variants before the first eBay mutation.
+                enrich_source_with_variants(source_path)
             normalize_source(read_json(source_path))
             valid_source_dirs.add(product_dir)
         except (EbayError, ValueError) as exc:

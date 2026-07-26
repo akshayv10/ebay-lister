@@ -127,6 +127,48 @@ def test_prepare_keeps_one_offer_when_sibling_blocks() -> None:
         assert [item["status"] for item in result["products"]] == ["api_prepared", "blocked"]
 
 
+def test_prepare_uses_supplied_eps_without_reimport() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        source_path = root / "source.json"
+        result_path = root / "result.json"
+        value = source("1005000000000001")
+        value["media"] = {
+            "source": "alisave_all",
+            "images": [
+                {
+                    "eps_url": "https://i.ebayimg.com/images/g/direct/s-l1600.jpg",
+                    "variant_options": {},
+                }
+            ],
+        }
+        write_json(source_path, value)
+        initialize_result(source_path, result_path)
+        with patch("ebay_listing.category_and_aspects", return_value=("123", value["aspects"], [])), \
+             patch("ebay_listing.put_with_retry"), \
+             patch("ebay_listing.create_or_reuse_offer", return_value=("offer", {"sku": "x"})), \
+             patch("ebay_listing.eps_image") as import_mock:
+            # Readback calls are not material to this assertion.
+            class Client:
+                def request(self, method, path, **kwargs):
+                    class Response:
+                        data = {} if "get_listing_fees" in path else {"sku": "x"}
+                    return Response()
+            try:
+                from ebay_listing import prepare_product
+                prepare_product(Client(), {
+                    "merchant_location_key": "irvine-92618",
+                    "payment_policy_id": "pay",
+                    "return_policy_id": "return",
+                    "fulfillment_policy_id": "ship",
+                    "campaign_id": "campaign",
+                }, result_path)
+            except Exception:
+                # Other mocked readbacks may reject, but supplied EPS must never be re-imported.
+                pass
+        import_mock.assert_not_called()
+
+
 def test_publish_keeps_successful_sibling_live() -> None:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory) / "frp-20260725-test"

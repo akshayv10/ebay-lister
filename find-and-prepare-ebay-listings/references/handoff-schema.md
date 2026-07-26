@@ -2,7 +2,8 @@
 
 ## External reviewed batch
 
-The `find-resale-products` workflow dispatch accepts one schema-version-1 envelope with
+The `find-resale-products` workflow dispatch accepts schema version 1 for legacy
+reviewed preparation and schema version 2 for immediate listing. Both contain
 `local_calendar_date`, `assigned_niche`, and exactly two distinct products. Each product
 must provide canonical AliExpress identity, title, functional fingerprint, verified
 brand plus evidence, rating/reviews/orders, explicit US-region confirmation, material
@@ -19,9 +20,11 @@ risk, and:
 }
 ```
 
-Derive the batch ID deterministically from the date, niche, product IDs, and structured
-option values. Re-fetch current AliExpress detail and resolve the options to exactly one
-SKU. Never replace an unresolved selection with the cheapest or default variant.
+Schema version 2 additionally requires a `media` object with 1–24 ordered records. Each
+record has a unique SHA-256, EPS image ID, HTTPS EPS URL, role, positive unique order,
+and optional structured `variant_options`. Include the ordered image hashes in the
+deterministic batch ID. Re-fetch current AliExpress detail and never replace an
+unresolved selection with the cheapest or default variant.
 
 ## Source
 
@@ -71,6 +74,8 @@ Never store credentials, tokens, callback codes, or the full address.
 
 ## Live result
 
-Only the separately approved publish command may add `status: live`, `published: true`, listing IDs, canonical URLs, General campaign/ad IDs, bid `10.0`, and `priority_promotion_enabled: false`.
+Only the separately approved legacy publish command or an explicit schema-version-2
+`list` operation may add `status: live`, `published: true`, listing IDs, canonical URLs,
+General campaign/ad IDs, bid `10.0`, and `priority_promotion_enabled: false`.
 
 Any publish failure produces `publish_rolled_back` or `reconciliation_required`, never `live`.

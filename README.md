@@ -125,8 +125,8 @@ already publish — they are included in the LIVE condition in the run step.
 ## Prepare a verified pair from `find-resale-products`
 
 `.github/workflows/handoff.yml` accepts the exact two-product batch produced by the
-installed `find-resale-products` skill. It is intentionally separate from daily
-auto-sourcing and the advisory single-link inbox path.
+installed `find-resale-products` skill. It supports legacy reviewed preparation and a
+schema-version-2 immediate-list operation carrying eBay-hosted AliSave image manifests.
 
 The prepare dispatch:
 
@@ -137,12 +137,18 @@ The prepare dispatch:
 4. creates unpublished eBay offers independently; and
 5. uploads a seven-day `prepared-<frp-run-id>` review artifact.
 
-Nothing is published during prepare. A later publish dispatch must provide both the
+Nothing is published during legacy prepare. A later publish dispatch must provide both the
 prepare Actions run ID and the exact reviewed `frp-...` logical run ID. Each product is
 then published and promoted independently: a successful listing remains live if its
 sibling fails, while a product whose mandatory 10% General promotion fails is withdrawn.
 Ambiguous mutations are marked for read-only reconciliation and are never blindly
 retried.
+
+For schema version 2, the Mac first uploads compliant AliSave files through eBay Media
+API `createImageFromFile`. The workflow receives only EPS IDs/URLs and hashes—never
+local paths or image bytes. Operation `list` prepares and publishes each valid product
+in the same Action after verifying the exact deterministic run ID. A valid sibling
+remains live if the other product fails.
 
 The batch payload is passed as base64 JSON through `workflow_dispatch` and is not
 committed. Successful live listing history continues to be committed under `state/`.

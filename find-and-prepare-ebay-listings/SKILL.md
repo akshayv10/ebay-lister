@@ -93,16 +93,22 @@ Use the read-only observations to decide whether correction, rollback, or user i
 
 ## 7. Accept a reviewed GitHub handoff
 
-Use `.github/workflows/handoff.yml` only for a schema-version-1 batch from the installed
-`find-resale-products` skill. Run `scripts/handoff_batch.py` to re-fetch both AliExpress
-products, enforce all gates, and resolve each structured selected variant to exactly one
-current SKU. Block only the affected product when current evidence or the variant is
-missing or ambiguous.
+Use `.github/workflows/handoff.yml` for a schema-version-1 legacy prepared batch or a
+schema-version-2 immediate-list batch from the installed `find-resale-products` skill.
+Run `scripts/handoff_batch.py` to re-fetch both AliExpress products, enforce all gates,
+resolve structured variants, and accept only validated HTTPS EPS media records. Block
+only the affected product when current evidence, media, or variants are missing or
+ambiguous.
 
 Prepare with `ebay_listing.py prepare-independent`. Upload the complete unpublished run
 as `prepared-<exact-run-id>` for seven days. Publish later only when the dispatch includes
 the prepare Actions run ID and the matching exact logical run ID, using
 `ebay_listing.py publish-independent`.
+
+For schema version 2 with operation `list`, use the supplied EPS URLs directly without
+re-importing them, prepare independently, then call `publish-independent` in the same
+Action with the exact deterministic run ID. This immediate-list exception is authorized
+only by the workflow's explicit `list` operation and confirmation input.
 
 For this handoff path, preserve a successful sibling. If General/CPS promotion at 10%
 fails after publication, withdraw only that product. Mark unknown mutations
