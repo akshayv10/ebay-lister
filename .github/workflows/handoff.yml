@@ -9,6 +9,7 @@ on:
         type: choice
         options:
           - prepare
+          - list
           - publish
           - reconcile
         required: true
@@ -78,6 +79,10 @@ jobs:
             prepare)
               test -n "$BATCH_ID" && test -n "$PAYLOAD"
               ;;
+            list)
+              test -n "$BATCH_ID" && test -n "$PAYLOAD" && test -n "$CONFIRM_RUN"
+              test "$BATCH_ID" = "$CONFIRM_RUN"
+              ;;
             publish|reconcile)
               test -n "$BATCH_ID" && test -n "$PREPARE_RUN" && test -n "$CONFIRM_RUN"
               test "$BATCH_ID" = "$CONFIRM_RUN"
@@ -88,7 +93,7 @@ jobs:
           esac
 
       - name: Build strict handoff sources
-        if: inputs.operation == 'prepare'
+        if: inputs.operation == 'prepare' || inputs.operation == 'list'
         env:
           HANDOFF_PAYLOAD_B64: ${{ inputs.batch_payload_b64 }}
         run: |
@@ -96,7 +101,7 @@ jobs:
             --run-dir "ebay-listing-runs/${{ inputs.batch_id }}"
 
       - name: Prepare unpublished offers independently
-        if: inputs.operation == 'prepare'
+        if: inputs.operation == 'prepare' || inputs.operation == 'list'
         run: |
           python find-and-prepare-ebay-listings/scripts/ebay_listing.py prepare-independent \
             --run-dir "ebay-listing-runs/${{ inputs.batch_id }}"
@@ -110,6 +115,14 @@ jobs:
           path: ebay-listing-runs/${{ inputs.batch_id }}
           if-no-files-found: error
           retention-days: 7
+
+      - name: Publish immediate-list products independently
+        if: inputs.operation == 'list'
+        run: |
+          python find-and-prepare-ebay-listings/scripts/ebay_listing.py publish-independent \
+            --run-dir "ebay-listing-runs/${{ inputs.batch_id }}" \
+            --confirm-run-id "${{ inputs.confirm_run_id }}" \
+            --history state/resale-product-history.jsonl
 
       - name: Download exact prepared review
         if: inputs.operation == 'publish' || inputs.operation == 'reconcile'
@@ -144,16 +157,16 @@ jobs:
             --output prepared-run/reconcile.json
 
       - name: Upload publication or reconciliation result
-        if: always() && (inputs.operation == 'publish' || inputs.operation == 'reconcile')
+        if: always() && (inputs.operation == 'list' || inputs.operation == 'publish' || inputs.operation == 'reconcile')
         uses: actions/upload-artifact@v4
         with:
           name: result-${{ inputs.batch_id }}-${{ github.run_id }}
-          path: prepared-run
+          path: ${{ inputs.operation == 'list' && format('ebay-listing-runs/{0}', inputs.batch_id) || 'prepared-run' }}
           if-no-files-found: error
           retention-days: 7
 
       - name: Persist successful listing history
-        if: always() && inputs.operation == 'publish'
+        if: always() && (inputs.operation == 'list' || inputs.operation == 'publish')
         run: |
           mkdir -p state
           date -u +"%Y-%m-%dT%H:%M:%SZ" > state/last-run.txt
