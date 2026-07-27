@@ -113,9 +113,56 @@ def merge(current: list[str], sets: dict[str, list[str]], cap: int) -> tuple[lis
     return ordered[:cap], ordered[cap:]
 
 
-def _variant_count(values: list[Any]) -> int:
-    cell = values[draft_sheet.COL["Variants"]] if draft_sheet.COL["Variants"] < len(values) else ""
-    return len([line for line in str(cell).splitlines() if line.strip()]) or 1
+def _cell(values: list[Any], name: str) -> str:
+    index = draft_sheet.COL[name]
+    return str(values[index]).strip() if index < len(values) else ""
+
+
+def cap_for(values: list[Any], draft_id: str = "") -> int:
+    """The image cap for a row, erring towards the stricter multi-variant limit.
+
+    A cleared Variants cell does not mean "one variant": clearing an editable cell falls
+    back to the stored draft at publish time, so the original variations come back and
+    normalize_source then rejects more than 12 group images. When the cell is blank,
+    consult the stored draft, and assume multi-variant if it isn't available — writing 12
+    images costs nothing, whereas writing 24 makes the publish fail.
+    """
+    lines = [line for line in _cell(values, "Variants").splitlines() if line.strip()]
+    if lines:
+        return image_cap(len(lines))
+    try:
+        import draft_store  # noqa: PLC0415 - only needed for this fallback
+
+        stored = draft_store.load(draft_id).get("source", {}).get("selected_variants") or []
+        if stored:
+            return image_cap(len(stored))
+    except Exception:  # noqa: BLE001 - draft not checked out locally, or unreadable
+        pass
+    return MAX_GROUP_IMAGES
+
+
+def added_images(current: list[str], gallery: list[str]) -> list[str]:
+    """What the merge would actually change, compared by content not length.
+
+    Length alone lies: if the current cell holds two size variants of one photo, merge
+    canonicalizes them to one and can add a new image while the count stays put — which
+    would look like "nothing to do" and silently drop the new photo.
+    """
+    canonical_current = [ali_api._canonical_image(url) for url in current]
+    return [url for url in gallery if url not in canonical_current]
+
+
+def merged_warning(existing: str, message: str) -> str:
+    """Append to the Warnings cell instead of replacing it.
+
+    draft_row writes real validation warnings there — missing required item specifics,
+    image-import failures, skipped enrichment. Overwriting them would hide exactly what
+    the reviewer needs before approving.
+    """
+    parts = [part.strip() for part in str(existing or "").split("|") if part.strip()]
+    if message and message not in parts:
+        parts.append(message)
+    return " | ".join(parts)
 
 
 def run(args: argparse.Namespace) -> int:
@@ -167,12 +214,11 @@ def run(args: argparse.Namespace) -> int:
             print("    ! page returned no images (challenged?); row left untouched")
             continue
 
-        current = draft_sheet.parse_images(
-            values[draft_sheet.COL["Images"]] if draft_sheet.COL["Images"] < len(values) else ""
-        )
-        cap = image_cap(_variant_count(values))
+        current = draft_sheet.parse_images(_cell(values, "Images"))
+        cap = cap_for(values, row["draft_id"])
         gallery, overflow = merge(current, sets, cap)
-        added = len(gallery) - len(current)
+        added = added_images(current, gallery)
+        changed = bool(added) or gallery != [ali_api._canonical_image(url) for url in current]
         print(f"    found {found} ({len(sets['gallery'])} gallery, {len(sets['variant'])} variant, "
               f"{len(sets['description'])} description) → gallery {len(current)} → {len(gallery)} (cap {cap})")
 
@@ -180,7 +226,7 @@ def run(args: argparse.Namespace) -> int:
             for image in gallery:
                 print(f"      {image}")
             continue
-        if added <= 0 and not overflow:
+        if not changed and not overflow:
             print("    nothing new; row left untouched")
             continue
 
@@ -190,6 +236,7 @@ def run(args: argparse.Namespace) -> int:
             # and eBay can pull a listing over them. Flag the count so trimming is quick.
             warning = (f"{len(sets['description'])} image(s) came from the description "
                        "section — check them before publishing")
+        warning = merged_warning(_cell(values, "Warnings"), warning)
         draft_sheet.update_cells(sheet, row["row"], {
             "Images": draft_sheet.encode_images(gallery),
             "Spare Images": draft_sheet.encode_images(overflow),

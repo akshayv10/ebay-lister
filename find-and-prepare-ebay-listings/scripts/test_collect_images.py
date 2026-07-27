@@ -11,6 +11,9 @@ from __future__ import annotations
 import argparse
 import contextlib
 import io
+import json
+import tempfile
+from pathlib import Path
 from typing import Any
 
 import ali_api
@@ -161,9 +164,104 @@ def test_overflow_goes_to_spare_rather_than_being_dropped() -> None:
 def test_variant_count_drives_the_cap() -> None:
     values = [""] * len(draft_sheet.HEADERS)
     values[draft_sheet.COL["Variants"]] = "red | Color=Red | 1 | 2\nblue | Color=Blue | 1 | 2"
-    assert collect_images.image_cap(collect_images._variant_count(values)) == 12
+    assert collect_images.cap_for(values) == 12
+    values[draft_sheet.COL["Variants"]] = "default |  | 19.99 | 24.50"
+    assert collect_images.cap_for(values) == 24
+
+
+def test_a_cleared_variants_cell_keeps_the_strict_cap() -> None:
+    """Clearing an editable cell falls back to the stored draft at publish time, so the
+    original variations return and >12 group images would then be rejected. Guessing
+    "one variant" here would write 24 images that fail at publish."""
+    values = [""] * len(draft_sheet.HEADERS)
     values[draft_sheet.COL["Variants"]] = ""
-    assert collect_images.image_cap(collect_images._variant_count(values)) == 24
+    assert collect_images.cap_for(values, "no-such-draft") == 12
+
+
+def test_a_cleared_variants_cell_consults_the_stored_draft() -> None:
+    import draft_store
+
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp)
+        draft = {
+            "draft_id": "d-single",
+            "source": {"selected_variants": [{"id": "default"}]},
+        }
+        (directory / "d-single.json").write_text(json.dumps(draft), encoding="utf-8")
+        original = draft_store.DRAFT_DIR
+        draft_store.DRAFT_DIR = directory
+        try:
+            values = [""] * len(draft_sheet.HEADERS)
+            # Stored draft is single-variant, so the generous cap is safe after all.
+            assert collect_images.cap_for(values, "d-single") == 24
+        finally:
+            draft_store.DRAFT_DIR = original
+
+
+# ------------------------------------------- regressions from the PR #14 review
+
+def test_change_detection_is_by_content_not_length() -> None:
+    """Two size variants of one photo collapse to one, so a new image can arrive
+    without the count moving — length alone would call that 'nothing to do'."""
+    current = [
+        "https://ae01.alicdn.com/kf/Sdup.jpg",
+        "https://ae01.alicdn.com/kf/Sdup.jpg_640x640.jpg_.webp",
+    ]
+    sets = {"gallery": ["https://ae01.alicdn.com/kf/Snew.jpg"], "variant": [], "description": []}
+    gallery, _ = collect_images.merge(current, sets, 24)
+    assert len(gallery) == len(current), "the length is unchanged — this is the trap"
+    assert collect_images.added_images(current, gallery) == ["https://ae01.alicdn.com/kf/Snew.jpg"]
+
+
+def test_a_deduplicating_merge_is_still_written() -> None:
+    """The exact skip-guard trap: two size variants of one photo collapse to one, and the
+    page yields exactly one new image, so the gallery length never moves. Under the old
+    length comparison this wrote nothing and the new photo was lost."""
+    one_new_image = (
+        '<script>window.runParams = {"data": {"imageModule": {"imagePathList":'
+        ' ["//ae01.alicdn.com/kf/Sbrandnew.jpg"]}}};</script>'
+    )
+    values = _row("d1")
+    values[draft_sheet.COL["Images"]] = (
+        "https://ae01.alicdn.com/kf/Sdup.jpg\n"
+        "https://ae01.alicdn.com/kf/Sdup.jpg_640x640.jpg_.webp"
+    )
+    rows = [{"draft_id": "d1", "row": 2, "values": values}]
+    code, sheet = _run_collector(rows, lambda url, timeout=20: one_new_image)
+    assert code == 0
+    assert sheet.writes, "a merge that dedupes and adds must still be saved"
+    written = next(
+        item["values"][0][0] for item in sheet.writes[0][2]["data"]
+        if item["range"].endswith(f"{chr(ord('A') + draft_sheet.COL['Images'])}2")
+    )
+    assert "Sbrandnew" in written, "the new image must reach the sheet"
+    assert written.count("Sdup.jpg") == 1, "the duplicate must be collapsed"
+
+
+def test_existing_warnings_are_kept() -> None:
+    """draft_row writes real validation warnings there; overwriting hides what the
+    reviewer needs before approving."""
+    assert collect_images.merged_warning("Missing required eBay item specifics: Type", "3 from description") == \
+        "Missing required eBay item specifics: Type | 3 from description"
+    # Re-running must not stack duplicates.
+    assert collect_images.merged_warning("a | b", "b") == "a | b"
+    assert collect_images.merged_warning("", "only") == "only"
+    assert collect_images.merged_warning("kept", "") == "kept"
+
+
+def test_collector_appends_rather_than_replacing_the_warnings_cell() -> None:
+    values = _row("d1")
+    values[draft_sheet.COL["Warnings"]] = "Category/item-specific validation failed"
+    rows = [{"draft_id": "d1", "row": 2, "values": values}]
+    code, sheet = _run_collector(rows, _Fetcher())
+    assert code == 0
+    payload = sheet.writes[0][2]["data"]
+    written = next(
+        item["values"][0][0] for item in payload
+        if item["range"].endswith(f"{chr(ord('A') + draft_sheet.COL['Warnings'])}2")
+    )
+    assert "Category/item-specific validation failed" in written, "the existing warning was lost"
+    assert "description section" in written
 
 
 # ------------------------------------------------------------------ sheet safety
