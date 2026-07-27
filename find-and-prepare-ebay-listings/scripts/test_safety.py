@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Safety tests for the publish path.
 
-The daily_run.py entrypoint stays dry unless --live is passed explicitly, and the
-automation schedule stays paused. By design, the workflow now defaults its manual mode to
-"full" (publishing) and lets mode alone decide — there is no separate LIVE_LISTING kill
-switch. These tests lock that intended behavior in place.
+The daily_run.py entrypoint stays dry unless --live is passed explicitly. By design the
+workflow now defaults its manual mode to "draft" (review before listing) and lets mode
+alone decide — there is no separate LIVE_LISTING kill switch. Scheduled runs draft unless
+the repository variable LISTING_MODE is set to "auto", which restores the original
+publish-immediately behaviour. These tests lock that intended behavior in place.
 """
 
 from __future__ import annotations
@@ -42,21 +43,40 @@ def test_workflow_schedule_is_exactly_9am_ist() -> None:
     assert '"30 3 * * *"' in active_schedule[0], f"expected 09:00 IST (30 3 * * *), found: {active_schedule}"
 
 
-def test_workflow_defaults_to_full_mode() -> None:
-    """The manual run mode defaults to 'full' so 'Run workflow' publishes by default."""
+def test_workflow_defaults_to_draft_mode() -> None:
+    """'Run workflow' must default to drafting for review, not to publishing."""
     text = WORKFLOW.read_text(encoding="utf-8")
     assert "mode:" in text, "workflow needs a 'mode' input"
-    block = text.split("mode:", 1)[1][:400]
-    assert "default: full" in block, "mode must default to full"
+    block = text.split("mode:", 1)[1][:500]
+    assert "default: draft" in block, "mode must default to draft"
+    assert "full" in block, "publishing immediately must remain available as an option"
     assert "dry-run" in block, "dry-run must remain available as an option"
 
 
-def test_workflow_publishes_only_in_full_or_scheduled_mode() -> None:
+def test_workflow_publishes_only_on_full_mode_or_explicit_auto() -> None:
+    """A scheduled run publishes only when LISTING_MODE is explicitly set to 'auto'."""
     text = WORKFLOW.read_text(encoding="utf-8")
     assert "--live" in text, "workflow must pass --live to publish"
     live_line = next(line for line in text.splitlines() if line.strip().startswith("LIVE:"))
     assert "inputs.mode == 'full'" in live_line, "mode=full drives the LIVE decision"
-    assert "github.event_name == 'schedule'" in live_line, "scheduled runs publish too"
+    assert "vars.LISTING_MODE == 'auto'" in live_line, "scheduled publishing must be opt-in"
+
+
+def test_scheduled_runs_draft_by_default() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert "--draft" in text, "workflow must be able to pass --draft"
+    draft_line = next(line for line in text.splitlines() if line.strip().startswith("DRAFT:"))
+    assert "github.event_name == 'schedule'" in draft_line, "scheduled runs must draft"
+    assert "vars.LISTING_MODE != 'auto'" in draft_line, "drafting is the default for the schedule"
+
+
+def test_draft_mode_creates_nothing_on_ebay() -> None:
+    """Drafting validates read-only; the offer-creating path must stay behind --live."""
+    source = (SCRIPTS / "daily_run.py").read_text(encoding="utf-8")
+    build = source.index("def build_drafts(")
+    run_start = source.index("def run(mode: str)")
+    assert "validate_for_draft" in source[build:run_start], "drafting must use read-only validation"
+    assert "prepare_product" not in source, "daily_run must never create eBay offers directly"
 
 
 def test_workflow_has_no_kill_switch() -> None:

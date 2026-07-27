@@ -1,13 +1,17 @@
 name: Daily eBay auto-lister
 
-# AUTOMATION IS LIVE — runs daily at 09:00 IST (03:30 UTC) and publishes real listings.
+# AUTOMATION IS LIVE — runs daily at 09:00 IST (03:30 UTC).
 #
-# Publishing is the default: mode "full" (the default) creates real eBay listings.
-# Pick "dry-run" to source and validate without listing anything. Mode alone decides
-# publishing — there is no separate kill switch. Scheduled runs always publish; they
-# are already included in the LIVE condition below.
+# DRAFT-FIRST IS THE DEFAULT. A scheduled run sources two products, enriches and
+# validates them, and saves them as DRAFTS for review — it creates nothing on eBay.
+# You review them in the workbook's "Drafts" tab, tick Publish? = YES on the ones you
+# want, and run the "Publish approved eBay drafts" workflow.
 #
-# To pause again, comment out the `schedule` block below (or disable the workflow in
+# To go back to hands-off automatic listing, set the repository variable
+# LISTING_MODE=auto. Scheduled runs then publish immediately again, exactly as before.
+# Manual dispatch ignores LISTING_MODE and uses the mode you pick.
+#
+# To pause entirely, comment out the `schedule` block below (or disable the workflow in
 # the Actions tab).
 on:
   schedule:
@@ -18,17 +22,22 @@ on:
         description: "Operation mode (only one)"
         type: choice
         options:
-          - full            # publishes real eBay listings (default)
-          - dry-run         # source + validate only, list nothing
+          - draft           # source + save drafts for review (default; nothing goes live)
+          - full            # publishes real eBay listings immediately
+          - dry-run         # source + validate only, save nothing
           - sheet-sync-only
           - email-test
-        default: full
+        default: draft
 
 permissions:
   contents: write   # allows committing updated history back to the repo
 
+# Shared with publish-drafts.yml on purpose. Both jobs commit and push state/ (draft
+# records and listing history). If they overlapped, one push would be rejected — and a
+# lost publish commit would leave a draft marked publishable after its listing already
+# went live, so the next approved run would list it a second time.
 concurrency:
-  group: daily-ebay-lister
+  group: ebay-lister-state
   cancel-in-progress: false
 
 jobs:
@@ -39,10 +48,12 @@ jobs:
       EBAY_ACCOUNT_CONFIG: ebay-account.json
       HISTORY_PATH: state/resale-product-history.jsonl
       RUNS_DIR: ebay-listing-runs
+      DRAFT_DIR: state/drafts
       RUN_TZ: ${{ vars.RUN_TZ || 'Asia/Kolkata' }}
       ALI_DEBUG: ${{ vars.ALI_DEBUG || '0' }}
       SHEETS_SPREADSHEET_ID: 10GgtsN_cxhHBvbEYa4vUXBUbC-LqeElkzmRiL3TT0Uk
       SHEETS_TAB_NAME: Auto Lister
+      SHEETS_DRAFT_TAB_NAME: ${{ vars.SHEETS_DRAFT_TAB_NAME || 'Drafts' }}
       SHEETS_SPREADSHEET_URL: https://docs.google.com/spreadsheets/d/10GgtsN_cxhHBvbEYa4vUXBUbC-LqeElkzmRiL3TT0Uk/edit
       GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
       # --- eBay secrets ---
@@ -80,20 +91,34 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
-      # Publishing happens on mode=full (the default) or a scheduled run. Any other mode
-      # runs daily_run.py with no --live flag, which is a dry run.
+      # Publishing happens on mode=full, or on a scheduled run when the repository
+      # variable LISTING_MODE is set to "auto". Scheduled runs otherwise draft for review.
+      # Any other mode runs daily_run.py with no --live flag, which never publishes.
       - name: Run lister
-        if: github.event_name == 'schedule' || inputs.mode == 'full' || inputs.mode == 'dry-run'
+        if: github.event_name == 'schedule' || inputs.mode == 'draft' || inputs.mode == 'full' || inputs.mode == 'dry-run'
         env:
-          LIVE: ${{ (github.event_name == 'schedule' || inputs.mode == 'full') && 'yes' || 'no' }}
+          LIVE: ${{ (inputs.mode == 'full' || (github.event_name == 'schedule' && vars.LISTING_MODE == 'auto')) && 'yes' || 'no' }}
+          DRAFT: ${{ (inputs.mode == 'draft' || (github.event_name == 'schedule' && vars.LISTING_MODE != 'auto')) && 'yes' || 'no' }}
         run: |
           if [ "$LIVE" = "yes" ]; then
             echo "::warning::LIVE MODE — this run will publish real eBay listings."
             python find-and-prepare-ebay-listings/scripts/daily_run.py --live
+          elif [ "$DRAFT" = "yes" ]; then
+            echo "DRAFT MODE — saving drafts for review; nothing will be listed."
+            python find-and-prepare-ebay-listings/scripts/daily_run.py --draft
           else
             echo "DRY RUN — sourcing and validating only; nothing will be listed."
             python find-and-prepare-ebay-listings/scripts/daily_run.py
           fi
+
+      - name: Upload draft review page
+        if: always() && (github.event_name == 'schedule' || inputs.mode == 'draft')
+        uses: actions/upload-artifact@v4
+        with:
+          name: draft-review-${{ github.run_id }}
+          path: ebay-listing-runs/drafts-preview.html
+          if-no-files-found: ignore
+          retention-days: 30
 
       - name: Backfill and sync Google Sheet
         if: github.event_name == 'workflow_dispatch' && inputs.mode == 'sheet-sync-only'
@@ -103,8 +128,12 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.mode == 'email-test'
         run: python find-and-prepare-ebay-listings/scripts/notify.py --test
 
+      # Drafts live under state/, so this commit is now load-bearing: losing it would
+      # drop a draft the review email already announced. Retry on rejection.
       - name: Heartbeat + persist history
         if: always()
+        env:
+          BRANCH: ${{ github.ref_name }}
         run: |
           mkdir -p state
           date -u +"%Y-%m-%dT%H:%M:%SZ" > state/last-run.txt
@@ -113,7 +142,17 @@ jobs:
           git add state
           if git diff --cached --quiet; then
             echo "No history changes to commit."
-          else
-            git commit -m "daily run heartbeat + history $(date -u +%F)"
-            git push
+            exit 0
           fi
+          git commit -m "daily run heartbeat + history $(date -u +%F)"
+          for attempt in 1 2 3 4 5; do
+            if git push origin "HEAD:$BRANCH"; then
+              echo "Persisted state on attempt $attempt."
+              exit 0
+            fi
+            echo "Push rejected; rebasing onto origin/$BRANCH and retrying ($attempt)."
+            git pull --rebase origin "$BRANCH" || true
+            sleep $((attempt * 3))
+          done
+          echo "::error::Could not persist state/ — drafts from this run may be missing on the next run."
+          exit 1

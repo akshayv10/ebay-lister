@@ -1,0 +1,127 @@
+name: Publish approved eBay drafts
+run-name: Publish drafts${{ inputs.draft_id && format(' / {0}', inputs.draft_id) || '' }}
+
+# Second half of the review-before-publish flow.
+#
+# The daily workflow saves drafts under state/drafts/ and writes one row per draft into
+# the workbook's "Drafts" tab. Review them there, edit anything you like (title,
+# description, item specifics, images, variants, price override), then tick
+# Publish? = YES on the rows you approve and run this workflow.
+#
+# Publishing is opt-in: mode "publish" lists for real; "dry-run" (the default) resolves
+# the approved drafts and validates your edits without touching eBay.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "publish = list for real; dry-run = validate only"
+        type: choice
+        options:
+          - dry-run
+          - publish
+        default: dry-run
+      draft_id:
+        description: "Optional: publish only this draft ID (must still be ticked in the sheet)"
+        type: string
+        required: false
+
+permissions:
+  contents: write   # commits the updated draft state + listing history back to the repo
+
+# Shared with daily.yml — see the note there. These two workflows must never commit
+# state/ concurrently, or a rejected push can resurrect an already-published draft.
+concurrency:
+  group: ebay-lister-state
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      # --- non-secret config (committed) ---
+      EBAY_ACCOUNT_CONFIG: ebay-account.json
+      HISTORY_PATH: state/resale-product-history.jsonl
+      DRAFT_DIR: state/drafts
+      RUNS_DIR: ebay-listing-runs
+      RUN_TZ: ${{ vars.RUN_TZ || 'Asia/Kolkata' }}
+      ALI_DEBUG: ${{ vars.ALI_DEBUG || '0' }}
+      DRAFT_MAX_COST_DRIFT_PCT: ${{ vars.DRAFT_MAX_COST_DRIFT_PCT || '10' }}
+      SHEETS_SPREADSHEET_ID: 10GgtsN_cxhHBvbEYa4vUXBUbC-LqeElkzmRiL3TT0Uk
+      SHEETS_TAB_NAME: Auto Lister
+      SHEETS_DRAFT_TAB_NAME: ${{ vars.SHEETS_DRAFT_TAB_NAME || 'Drafts' }}
+      SHEETS_SPREADSHEET_URL: https://docs.google.com/spreadsheets/d/10GgtsN_cxhHBvbEYa4vUXBUbC-LqeElkzmRiL3TT0Uk/edit
+      GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+      # --- eBay secrets ---
+      EBAY_CLIENT_ID: ${{ secrets.EBAY_CLIENT_ID }}
+      EBAY_CLIENT_SECRET: ${{ secrets.EBAY_CLIENT_SECRET }}
+      EBAY_RUNAME: ${{ secrets.EBAY_RUNAME }}
+      EBAY_REFRESH_TOKEN: ${{ secrets.EBAY_REFRESH_TOKEN }}
+      # --- AliExpress secrets (used to re-check the cost before listing) ---
+      ALIEXPRESS_APP_KEY: ${{ secrets.ALIEXPRESS_APP_KEY }}
+      ALIEXPRESS_APP_SECRET: ${{ secrets.ALIEXPRESS_APP_SECRET }}
+      ALIEXPRESS_TRACKING_ID: ${{ secrets.ALIEXPRESS_TRACKING_ID }}
+      ALIEXPRESS_ACCESS_TOKEN: ${{ secrets.ALIEXPRESS_ACCESS_TOKEN }}
+      # --- email secrets ---
+      NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
+      NOTIFY_FROM: ${{ secrets.NOTIFY_FROM }}
+      SMTP_HOST: ${{ vars.SMTP_HOST || 'smtp.gmail.com' }}
+      SMTP_PORT: ${{ vars.SMTP_PORT || '587' }}
+      SMTP_USER: ${{ secrets.SMTP_USER }}
+      SMTP_PASS: ${{ secrets.SMTP_PASS }}
+      SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      # No OPENAI_API_KEY above on purpose: publishing runs with enrichment disabled, so
+      # the AI can never overwrite the copy you reviewed.
+      - name: Publish approved drafts
+        env:
+          DRAFT_ID: ${{ inputs.draft_id }}
+        run: |
+          ARGS=""
+          if [ -n "$DRAFT_ID" ]; then ARGS="--draft-id $DRAFT_ID"; fi
+          if [ "${{ inputs.mode }}" = "publish" ]; then
+            echo "::warning::LIVE MODE — this run will publish the approved drafts to eBay."
+            python find-and-prepare-ebay-listings/scripts/publish_drafts.py --live $ARGS
+          else
+            echo "DRY RUN — resolving approved drafts and validating edits; nothing will be listed."
+            python find-and-prepare-ebay-listings/scripts/publish_drafts.py $ARGS
+          fi
+
+      # This commit is what records that a draft went live. Losing it would leave the
+      # draft marked publishable, so a later run could list the same product again —
+      # retry on rejection, and fail loudly rather than silently if it never lands.
+      - name: Persist draft state and listing history
+        if: always()
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          mkdir -p state
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > state/last-run.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add state
+          if git diff --cached --quiet; then
+            echo "No draft or history changes to commit."
+            exit 0
+          fi
+          git commit -m "publish approved drafts $(date -u +%F)"
+          for attempt in 1 2 3 4 5; do
+            if git push origin "HEAD:$BRANCH"; then
+              echo "Persisted draft state on attempt $attempt."
+              exit 0
+            fi
+            echo "Push rejected; rebasing onto origin/$BRANCH and retrying ($attempt)."
+            git pull --rebase origin "$BRANCH" || true
+            sleep $((attempt * 3))
+          done
+          echo "::error::Could not persist state/ after publishing. A published draft may still be marked publishable — inspect state/drafts/ and the Drafts tab before the next publish run."
+          exit 1

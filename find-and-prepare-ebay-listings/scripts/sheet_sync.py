@@ -60,8 +60,29 @@ HEADERS = [
 ]
 
 
+# Zero-based column index ranges given the HEADERS above, used to format the Auto Lister
+# tab. Passed explicitly so a second tab (see draft_sheet.py) can reuse SheetsClient with
+# its own layout.
+CURRENCY_COLUMNS = [(11, 18)]
+PERCENT_COLUMNS = [18, 24]
+COLUMN_WIDTHS = [
+    (0, 4, 120), (4, 5, 210), (5, 6, 320), (6, 11, 150), (11, 23, 120),
+    (23, 24, 300), (24, 25, 140), (25, 26, 200),
+]
+
+
 class SheetSyncError(RuntimeError):
     pass
+
+
+def column_letter(index: int) -> str:
+    """0-based column index to its A1 letter ('A', 'Z', 'AA', ...)."""
+    letters = ""
+    index += 1
+    while index:
+        index, remainder = divmod(index - 1, 26)
+        letters = chr(ord("A") + remainder) + letters
+    return letters
 
 
 def _now_iso() -> str:
@@ -273,11 +294,29 @@ class SheetsClient:
         spreadsheet_id: str = SPREADSHEET_ID,
         sheet_name: str = SHEET_NAME,
         token: str | None = None,
+        headers: list[str] | None = None,
+        currency_columns: list[tuple[int, int]] | None = None,
+        percent_columns: list[int] | None = None,
+        column_widths: list[tuple[int, int, int]] | None = None,
     ):
         self.spreadsheet_id = spreadsheet_id
         self.sheet_name = sheet_name
         self.token = token or service_account_token(os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", ""))
         self.sheet_id: int | None = None
+        self.headers = list(headers) if headers is not None else list(HEADERS)
+        self.currency_columns = (
+            list(currency_columns) if currency_columns is not None else list(CURRENCY_COLUMNS)
+        )
+        self.percent_columns = (
+            list(percent_columns) if percent_columns is not None else list(PERCENT_COLUMNS)
+        )
+        self.column_widths = (
+            list(column_widths) if column_widths is not None else list(COLUMN_WIDTHS)
+        )
+
+    @property
+    def last_column(self) -> str:
+        return column_letter(len(self.headers) - 1)
 
     def request(
         self,
@@ -324,7 +363,7 @@ class SheetsClient:
                             "title": self.sheet_name,
                             "gridProperties": {
                                 "rowCount": 1000,
-                                "columnCount": len(HEADERS),
+                                "columnCount": len(self.headers),
                                 "frozenRowCount": 1,
                             },
                         }
@@ -337,13 +376,13 @@ class SheetsClient:
 
     def _ensure_headers_and_format(self) -> None:
         assert self.sheet_id is not None
-        encoded = urllib.parse.quote(f"'{self.sheet_name}'!A1:Z1", safe="")
+        header_range = f"'{self.sheet_name}'!A1:{self.last_column}1"
+        encoded = urllib.parse.quote(header_range, safe="")
         self.request("PUT", f"/values/{encoded}", {
-            "range": f"'{self.sheet_name}'!A1:Z1",
+            "range": header_range,
             "majorDimension": "ROWS",
-            "values": [HEADERS],
+            "values": [self.headers],
         }, query={"valueInputOption": "RAW"})
-        currency_columns = [(11, 18)]
         requests: list[dict[str, Any]] = [
             {
                 "repeatCell": {
@@ -352,7 +391,7 @@ class SheetsClient:
                         "startRowIndex": 0,
                         "endRowIndex": 1,
                         "startColumnIndex": 0,
-                        "endColumnIndex": len(HEADERS),
+                        "endColumnIndex": len(self.headers),
                     },
                     "cell": {
                         "userEnteredFormat": {
@@ -381,13 +420,13 @@ class SheetsClient:
                             "sheetId": self.sheet_id,
                             "startRowIndex": 0,
                             "startColumnIndex": 0,
-                            "endColumnIndex": len(HEADERS),
+                            "endColumnIndex": len(self.headers),
                         }
                     }
                 }
             },
         ]
-        for start, end in currency_columns:
+        for start, end in self.currency_columns:
             requests.append({
                 "repeatCell": {
                     "range": {
@@ -404,7 +443,7 @@ class SheetsClient:
                     "fields": "userEnteredFormat.numberFormat",
                 }
             })
-        for column in (18, 24):
+        for column in self.percent_columns:
             requests.append({
                 "repeatCell": {
                     "range": {
@@ -421,11 +460,7 @@ class SheetsClient:
                     "fields": "userEnteredFormat.numberFormat",
                 }
             })
-        widths = [
-            (0, 4, 120), (4, 5, 210), (5, 6, 320), (6, 11, 150), (11, 23, 120),
-            (23, 24, 300), (24, 25, 140), (25, 26, 200),
-        ]
-        for start, end, pixels in widths:
+        for start, end, pixels in self.column_widths:
             requests.append({
                 "updateDimensionProperties": {
                     "range": {
@@ -450,29 +485,45 @@ class SheetsClient:
             if row and str(row[0]).strip()
         }
 
-    def upsert(self, records: list[dict[str, Any]]) -> int:
+    def read_rows(self) -> list[tuple[int, list[Any]]]:
+        """Every populated data row as (1-based sheet row number, cell values)."""
+        data_range = f"'{self.sheet_name}'!A2:{self.last_column}"
+        encoded = urllib.parse.quote(data_range, safe="")
+        response = self.request("GET", f"/values/{encoded}")
+        rows: list[tuple[int, list[Any]]] = []
+        for index, values in enumerate(response.get("values", [])):
+            if values and str(values[0]).strip():
+                rows.append((index + 2, list(values)))
+        return rows
+
+    def upsert_rows(self, keyed_rows: list[tuple[str, list[Any]]], value_input: str = "RAW") -> int:
+        """Write rows keyed by their column-A value, appending keys not already present."""
         self.ensure_sheet()
         existing = self.existing_rows()
         updates: list[dict[str, Any]] = []
         next_row = max(existing.values(), default=1) + 1
-        for record in records:
-            key = str(record["sync_key"])
-            row = existing.get(key)
+        for key, values in keyed_rows:
+            row = existing.get(str(key))
             if row is None:
                 row = next_row
                 next_row += 1
-                existing[key] = row
+                existing[str(key)] = row
             updates.append({
-                "range": f"'{self.sheet_name}'!A{row}:Z{row}",
+                "range": f"'{self.sheet_name}'!A{row}:{self.last_column}{row}",
                 "majorDimension": "ROWS",
-                "values": [row_values(record)],
+                "values": [values],
             })
         if updates:
             self.request("POST", "/values:batchUpdate", {
-                "valueInputOption": "RAW",
+                "valueInputOption": value_input,
                 "data": updates,
             })
         return len(updates)
+
+    def upsert(self, records: list[dict[str, Any]]) -> int:
+        return self.upsert_rows(
+            [(str(record["sync_key"]), row_values(record)) for record in records]
+        )
 
 
 def sync_records(

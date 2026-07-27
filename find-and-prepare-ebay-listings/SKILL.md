@@ -110,6 +110,30 @@ fails after publication, withdraw only that product. Mark unknown mutations
 Commit only verified successful listing history; never commit the dispatch payload or
 prepared artifact.
 
+## Unattended daily automation: draft first
+
+The scheduled GitHub Actions run (`scripts/daily_run.py`) now follows the same
+prepare-then-approve boundary as this skill instead of publishing unattended.
+
+`daily_run.py --draft` sources two products, applies variant and AI enrichment, validates
+each against eBay **read-only** (`ebay_listing.validate_for_draft`: Taxonomy category and
+required item specifics only), and writes a draft to `state/drafts/<draft-id>.json` with
+`status: draft`, `published: false`, `publish_allowed: false`. It creates nothing on eBay
+— no EPS import, no inventory item, no offer. Each draft is mirrored into the workbook's
+`Drafts` tab and rendered into an HTML review page that is emailed and uploaded as an
+artifact.
+
+`scripts/publish_drafts.py --live` is the separate approval step. It publishes only drafts
+the user ticked `Publish? = YES` in the sheet, layering their edits onto the stored draft,
+re-checking the AliExpress cost first, and calling `ebay_listing.list_one(..., enrich=False)`
+so reviewed copy is never overwritten by the AI.
+
+Do not infer Seller Hub draft availability here either. There is no public eBay API that
+creates a Seller Hub draft, so the sheet and the draft JSON are the draft.
+
+`daily_run.py --live` retains the original publish-immediately behaviour; the repository
+variable `LISTING_MODE=auto` restores it for scheduled runs.
+
 ## References and helpers
 
 - [references/ebay-api-setup.md](references/ebay-api-setup.md): Production developer, OAuth, Keychain, policies, location, and campaign setup.
@@ -124,4 +148,7 @@ prepared artifact.
 - `scripts/listing_job.py`: deterministic source and review validation.
 - `scripts/extension_job.py`: legacy extension state validation for explicit fallback only.
 - `scripts/candidate_ledger.py`, `daily_history.py`, `ebay_price.py`, `variant_rank.py`, and `run_budget.py`: retained deterministic helpers.
+- `scripts/draft_store.py`, `draft_sheet.py`, `draft_preview.py`, and `publish_drafts.py`: the unattended draft-review-approve flow.
 - `scripts/test_skill.py`: offline regression suite; it must never call Production.
+- `scripts/test_drafts.py`: offline regression suite for the draft flow, including the
+  "drafting mutates nothing on eBay" property.

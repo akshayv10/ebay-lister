@@ -137,6 +137,7 @@ def test_sheet_client_upserts_existing_key_and_appends_new_key() -> None:
             self.sheet_name = "Auto Lister"
             self.sheet_id = 42
             self.requests: list[tuple] = []
+            self.headers = list(sheet_sync.HEADERS)
 
         def ensure_sheet(self):
             return 42

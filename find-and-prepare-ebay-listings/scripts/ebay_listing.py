@@ -31,7 +31,7 @@ from ebay_setup import preflight
 from listing_job import build_review, initialize_result, normalize_source, record_prepared
 
 
-HISTORY_PATH = Path("/Users/akballer47/Documents/Codex/resale-product-history.jsonl")
+HISTORY_PATH = Path(os.environ.get("HISTORY_PATH", "state/resale-product-history.jsonl"))
 
 
 def is_country_aspect(name: str) -> bool:
@@ -172,17 +172,20 @@ def category_and_aspects(client: EbayClient, source: dict[str, Any]) -> tuple[st
     tree_id = str(tree.get("categoryTreeId", "")) if isinstance(tree, dict) else ""
     if not tree_id:
         raise EbayError("Taxonomy API did not return an EBAY_US category tree ID")
-    suggested = client.request(
-        "GET", f"/commerce/taxonomy/v1/category_tree/{tree_id}/get_category_suggestions",
-        query={"q": source["category_query"]},
-    ).data
-    suggestions = suggested.get("categorySuggestions", []) if isinstance(suggested, dict) else []
-    if not isinstance(suggestions, list) or not suggestions:
-        raise EbayError(f"No eBay category suggestion for: {source['category_query']}")
-    category = suggestions[0].get("category", {}) if isinstance(suggestions[0], dict) else {}
-    category_id = str(category.get("categoryId", ""))
+    # A reviewed draft may pin an exact category; trust it over the suggestion engine.
+    category_id = str(source.get("category_id_override", "")).strip()
     if not category_id:
-        raise EbayError("Top category suggestion has no category ID")
+        suggested = client.request(
+            "GET", f"/commerce/taxonomy/v1/category_tree/{tree_id}/get_category_suggestions",
+            query={"q": source["category_query"]},
+        ).data
+        suggestions = suggested.get("categorySuggestions", []) if isinstance(suggested, dict) else []
+        if not isinstance(suggestions, list) or not suggestions:
+            raise EbayError(f"No eBay category suggestion for: {source['category_query']}")
+        category = suggestions[0].get("category", {}) if isinstance(suggestions[0], dict) else {}
+        category_id = str(category.get("categoryId", ""))
+        if not category_id:
+            raise EbayError("Top category suggestion has no category ID")
     aspect_payload = client.request(
         "GET", f"/commerce/taxonomy/v1/category_tree/{tree_id}/get_item_aspects_for_category",
         query={"category_id": category_id},
@@ -458,6 +461,39 @@ def prepare_product(client: EbayClient, config: dict[str, Any], result_path: Pat
         "listing_fees": fees if isinstance(fees, (dict, list)) else {},
     }
     return record_prepared(result_path, api_record)
+
+
+def validate_for_draft(client: EbayClient, source: dict[str, Any]) -> dict[str, Any]:
+    """Read-only eBay validation for a draft. Resolves the category and normalizes item
+    specifics through the Taxonomy API so the reviewer sees what eBay will actually
+    accept. Creates nothing: no EPS image import, no inventory item, no offer.
+
+    Set DRAFT_VERIFY_IMAGES=1 to additionally test-import each image into eBay Picture
+    Services. That does create hosted EPS images, so it stays opt-in.
+
+    Never raises — a validation failure becomes a warning the reviewer can act on."""
+    warnings: list[str] = []
+    category_id = ""
+    normalized_aspects: dict[str, list[str]] = {}
+    try:
+        category_id, normalized_aspects, missing = category_and_aspects(client, source)
+        if missing:
+            warnings.append(f"Missing required eBay item specifics: {', '.join(missing)}")
+    except Exception as exc:  # noqa: BLE001 - advisory: a draft must survive any eBay outage
+        warnings.append(f"Category/item-specific validation failed: {exc}")
+
+    if os.environ.get("DRAFT_VERIFY_IMAGES", "").strip().lower() in {"1", "true", "yes", "on"}:
+        for image_url in source.get("source_images", []):
+            try:
+                eps_image(client, image_url)
+            except Exception as exc:  # noqa: BLE001 - advisory, same as above
+                warnings.append(f"Image will not import into eBay: {image_url} ({exc})")
+    return {
+        "category_id": category_id,
+        "normalized_aspects": normalized_aspects,
+        "warnings": warnings,
+        "ok": bool(category_id) and not warnings,
+    }
 
 
 def source_paths(run_dir: Path) -> list[Path]:
@@ -1071,19 +1107,29 @@ def reconcile(run_dir: Path, client: EbayClient) -> dict[str, Any]:
     return {"status": "reconciled_read_only", "run_id": run.get("run_id"), "offers": observations}
 
 
-def list_one(client: EbayClient, config: dict[str, Any], source_path: Path) -> dict[str, Any]:
+def list_one(
+    client: EbayClient,
+    config: dict[str, Any],
+    source_path: Path,
+    enrich: bool = True,
+) -> dict[str, Any]:
     """Prepare, publish, and 10%-promote a single product. Returns the live product
     dict, or raises. If promotion fails after publish, the offer is withdrawn so we
-    never leave an unpromoted live listing."""
+    never leave an unpromoted live listing.
+
+    ``enrich=False`` skips variant/AI enrichment. Publishing an approved draft passes
+    False because the source has already been enriched and then hand-edited — re-running
+    the AI here would overwrite the reviewer's title, description, and item specifics."""
     # Best-effort enrichment; neither step may block a listing.
-    try:
-        enrich_source_with_variants(source_path)  # real eBay variations when a token exists
-    except Exception:  # noqa: BLE001
-        pass
-    try:
-        enrich_source_with_ai(source_path)  # AI title/description/specifics
-    except Exception:  # noqa: BLE001
-        pass
+    if enrich:
+        try:
+            enrich_source_with_variants(source_path)  # real eBay variations when a token exists
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            enrich_source_with_ai(source_path)  # AI title/description/specifics
+        except Exception:  # noqa: BLE001
+            pass
     result_path = source_path.with_name("result.json")
     initialize_result(source_path, result_path)
     result = read_json(result_path)
@@ -1118,7 +1164,13 @@ def list_one(client: EbayClient, config: dict[str, Any], source_path: Path) -> d
     return product
 
 
-def list_resilient(run_dir: Path, client: EbayClient, needed: int = 2, history_path: Path = HISTORY_PATH) -> dict[str, Any]:
+def list_resilient(
+    run_dir: Path,
+    client: EbayClient,
+    needed: int = 2,
+    history_path: Path = HISTORY_PATH,
+    enrich: bool = True,
+) -> dict[str, Any]:
     """List products from run_dir independently, skipping any that fail, until ``needed``
     are live. One bad candidate never blocks the others. Writes run-result.json."""
     config = require_setup(client)
@@ -1131,7 +1183,7 @@ def list_resilient(run_dir: Path, client: EbayClient, needed: int = 2, history_p
         if len(listed) >= needed:
             break
         try:
-            listed.append(list_one(client, config, source_path))
+            listed.append(list_one(client, config, source_path, enrich=enrich))
         except EbayError as exc:
             errors.append(f"{source_path.parent.name}: {exc}")
     if listed:
