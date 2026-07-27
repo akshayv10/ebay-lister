@@ -521,8 +521,10 @@ def variant_records(product_id: str) -> tuple[str, list[dict[str, Any]]]:
 # AliExpress CDN image URLs embedded in the public product page. The DS API returns only
 # the main gallery (and per-SKU thumbnails when a seller token is configured), so the
 # description and lifestyle shots are reachable only from the page itself.
+# Matches protocol-relative URLs too ("//ae01.alicdn.com/..."), which is how they appear
+# inside the page's inline JSON, and any alicdn host rather than just ae01/ae02 /kf/.
 _PAGE_IMAGE_RE = re.compile(
-    r"https?://ae\d{2}\.alicdn\.com/kf/[A-Za-z0-9_\-./]+?\.(?:jpg|jpeg|png|webp)",
+    r"(?:https?:)?//[A-Za-z0-9.-]*alicdn\.com/[A-Za-z0-9_\-./]+?\.(?:jpg|jpeg|png|webp)",
     re.IGNORECASE,
 )
 # AliExpress appends a size/format suffix (…_220x220.jpg_.webp). Strip it for the
@@ -537,45 +539,168 @@ def _canonical_image(url: str) -> str:
     return stripped if re.search(r"\.(?:jpg|jpeg|png|webp)$", stripped, re.IGNORECASE) else cleaned
 
 
-def page_images(product_id: str, timeout: int = 20) -> list[str]:
-    """Best-effort: scrape every product image from the public AliExpress page.
+# Thumbnails and spacers we never want in a listing gallery.
+_THUMBNAIL_HINT_RE = re.compile(r"_(?:\d{1,2}|1[0-4]\d)x(?:\d{1,2}|1[0-4]\d)\.", re.IGNORECASE)
+_NON_PHOTO_RE = re.compile(r"\.(?:gif|svg)(?:$|[?_])", re.IGNORECASE)
 
-    This is how we recover the photos ``ds.product.get`` will not return without a seller
-    token. It is advisory only — the result populates a read-only "spare images" column
-    for a human to choose from, and is never added to a listing automatically. Any
-    failure (blocked, geo-gated, markup change) returns an empty list.
+BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
+
+def is_listable_image(url: str) -> bool:
+    """False for thumbnails, spacers and animated images that don't belong in a gallery."""
+    if not url.startswith("https://"):
+        return False
+    if _NON_PHOTO_RE.search(url):
+        return False
+    return not _THUMBNAIL_HINT_RE.search(url)
+
+
+def fetch_page(url: str, timeout: int = 20) -> str:
+    """GET a page with browser-like headers. Returns '' on any failure.
+
+    Note this is for LOCAL use: AliExpress bot-challenges datacenter IPs, so from a
+    GitHub Actions runner this reliably returns nothing. See collect_images.py.
     """
-    request = urllib.request.Request(
-        detail_url(product_id),
-        method="GET",
-        headers={
-            "User-Agent": (
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-            ),
-            "Accept-Language": "en-US,en;q=0.9",
-        },
-    )
+    request = urllib.request.Request(url, method="GET", headers=BROWSER_HEADERS)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
-            body = response.read().decode("utf-8", errors="replace")
-    except Exception:  # noqa: BLE001 - advisory only; never let this break a run
+            return response.read().decode("utf-8", errors="replace")
+    except Exception:  # noqa: BLE001 - advisory; never let a fetch break a run
+        return ""
+
+
+def _json_blobs(body: str, key: str) -> list[Any]:
+    """Pull out each JSON object assigned to ``key`` in the page's inline scripts.
+
+    AliExpress renders its gallery client-side from a `window.runParams` blob, so the
+    URLs are in that JSON rather than in <img> tags. Brace-matching from the opening
+    brace is more reliable here than a regex, because the blob contains nested objects
+    and escaped quotes.
+    """
+    blobs: list[Any] = []
+    for match in re.finditer(re.escape(key) + r"\s*[:=]\s*\{", body):
+        start = body.index("{", match.end() - 1)
+        depth, index, in_string, escaped = 0, start, False, False
+        while index < len(body):
+            char = body[index]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    in_string = False
+            elif char == '"':
+                in_string = True
+            elif char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        blobs.append(json.loads(body[start:index + 1]))
+                    except json.JSONDecodeError:
+                        pass
+                    break
+            index += 1
+    return blobs
+
+
+def _collect_urls(node: Any, out: list[str]) -> None:
+    """Every alicdn image URL anywhere in a decoded JSON node, in document order."""
+    if isinstance(node, str):
+        out.extend(_PAGE_IMAGE_RE.findall(node))
+    elif isinstance(node, dict):
+        for value in node.values():
+            _collect_urls(value, out)
+    elif isinstance(node, list):
+        for value in node:
+            _collect_urls(value, out)
+
+
+def page_image_sets(body: str) -> dict[str, list[str]]:
+    """Classify a product page's images into gallery / variant / description.
+
+    Ordering matters downstream twice over: eBay treats image 1 as the primary photo,
+    and openai_copy only looks at the first 8 images — so the clean gallery shots must
+    come first, or the AI writes its copy from a size chart.
+    """
+    gallery: list[str] = []
+    variant: list[str] = []
+    description: list[str] = []
+
+    for blob in _json_blobs(body, "runParams") or _json_blobs(body, "window.runParams"):
+        data = blob.get("data") if isinstance(blob.get("data"), dict) else blob
+        if not isinstance(data, dict):
+            continue
+        for key, value in data.items():
+            lowered = key.casefold()
+            if "image" in lowered and "sku" not in lowered:
+                _collect_urls(value, gallery)
+            elif "sku" in lowered:
+                _collect_urls(value, variant)
+            elif "description" in lowered:
+                _collect_urls(value, description)
+
+    # Fall back to a whole-page scan when the blob is absent or shaped differently; the
+    # classification is then unknown, so treat it as gallery.
+    if not (gallery or variant or description):
+        gallery = _PAGE_IMAGE_RE.findall(body)
+
+    def clean(urls: list[str]) -> list[str]:
+        seen: set[str] = set()
+        out: list[str] = []
+        for raw in urls:
+            url = _canonical_image(raw)
+            if is_listable_image(url) and url not in seen:
+                seen.add(url)
+                out.append(url)
+        return out
+
+    return {"gallery": clean(gallery), "variant": clean(variant), "description": clean(description)}
+
+
+def description_url(body: str) -> str:
+    """The static CDN document holding the description-section photos.
+
+    Those images are the ones a seller-token-less run cannot otherwise reach, and the
+    document itself is usually served without bot protection.
+    """
+    match = re.search(r'"descriptionUrl"\s*:\s*"([^"]+)"', body)
+    return _https(match.group(1).replace("\\/", "/")) if match else ""
+
+
+def page_images(product_id: str, timeout: int = 20) -> list[str]:
+    """Every image on a product page, gallery first. '' on any failure.
+
+    LOCAL USE ONLY in practice — see fetch_page. Kept so spare_images still has a
+    fallback, but collect_images.py is the supported entry point.
+    """
+    body = fetch_page(detail_url(product_id), timeout=timeout)
+    if not body:
         return []
+    sets = page_image_sets(body)
+    ordered = sets["gallery"] + sets["variant"] + sets["description"]
     seen: set[str] = set()
-    found: list[str] = []
-    for raw in _PAGE_IMAGE_RE.findall(body):
-        url = _canonical_image(raw)
-        if url.startswith("https://") and url not in seen:
-            seen.add(url)
-            found.append(url)
-    return found[:MAX_IMAGES]
+    return [url for url in ordered if not (url in seen or seen.add(url))][:MAX_IMAGES]
 
 
 def spare_images(product_id: str, already_used: list[str]) -> list[str]:
     """Images we know about that the listing is not currently using.
 
-    Merges per-SKU variant thumbnails (seller token only) with a scrape of the public
-    product page, minus whatever ``already_used`` holds. Advisory suggestions only.
+    Merges per-SKU variant thumbnails (seller token only) with the product page, minus
+    whatever ``already_used`` holds. Advisory suggestions only.
+
+    Expect this to be empty from GitHub Actions: without ALIEXPRESS_ACCESS_TOKEN there
+    are no variant thumbnails, and the page fetch is bot-challenged from datacenter IPs.
+    Run collect_images.py locally to fill the gallery properly.
     """
     used = {_canonical_image(url) for url in already_used or []}
     used |= {(url or "").strip() for url in already_used or []}

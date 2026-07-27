@@ -28,7 +28,7 @@ import json
 import os
 from typing import Any
 
-from sheet_sync import SheetsClient, SheetSyncError
+from sheet_sync import SheetsClient, SheetSyncError, column_letter
 
 DRAFT_TAB_NAME = os.environ.get("SHEETS_DRAFT_TAB_NAME", "Drafts")
 
@@ -324,6 +324,35 @@ def sync_drafts(
     except Exception as exc:  # noqa: BLE001 - the draft file on disk is the source of truth
         return {"status": "error", "written": 0, "error": str(exc)}
     return {"status": "synced", "written": written, "error": ""}
+
+
+def update_cells(sheet: SheetsClient, row: int, values: dict[str, Any]) -> int:
+    """Write specific named cells of one row, leaving every other cell alone.
+
+    Used by collect_images.py, which only owns Images / Spare Images / Warnings. Writing
+    the whole row there would revert any title, price or variant edit made in between.
+    """
+    data = []
+    for name, value in values.items():
+        letter = column_letter(COL[name])
+        cell = f"'{sheet.sheet_name}'!{letter}{row}"
+        data.append({"range": cell, "majorDimension": "ROWS", "values": [[value]]})
+    if not data:
+        return 0
+    sheet.request("POST", "/values:batchUpdate", {"valueInputOption": "USER_ENTERED", "data": data})
+    return len(data)
+
+
+def read_all_rows(*, client_factory=client) -> list[dict[str, Any]]:
+    """Every draft row as {draft_id, row, values} — approved or not."""
+    if disabled():
+        return []
+    sheet = client_factory()
+    sheet.ensure_sheet()
+    return [
+        {"draft_id": str(values[0]).strip(), "row": row_number, "values": values}
+        for row_number, values in sheet.read_rows()
+    ]
 
 
 def read_approved(*, client_factory=client) -> list[dict[str, Any]]:
