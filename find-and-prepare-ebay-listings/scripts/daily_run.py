@@ -198,6 +198,14 @@ def run(mode: str) -> dict[str, Any]:
     run_dir = RUNS_DIR / run_stamp
     pool = int(os.environ.get("ALI_SOURCE_POOL", "6"))
 
+    # Products already sitting in review are not in the listing history, so sourcing
+    # would re-pick them tomorrow and we would end up with two publishable drafts — and
+    # then two live listings — for one product. Exclude them from selection, but keep
+    # them out of niche_priority above, which is about what has actually been listed.
+    import draft_store
+
+    sourcing_history = history + draft_store.history_views()
+
     result: dict[str, Any] = {
         "date": local_date, "niche": niche_order[0], "run_stamp": run_stamp,
         "status": "error", "products": [], "listed_count": 0, "notes": [],
@@ -212,7 +220,7 @@ def run(mode: str) -> dict[str, Any]:
     for candidate_niche in niche_order:
         niche = candidate_niche
         candidate_sources, candidate_notes = ali_api.source_products(
-            candidate_niche, run_stamp, local_date, history, needed=pool
+            candidate_niche, run_stamp, local_date, sourcing_history, needed=pool
         )
         notes += [f"[{candidate_niche}] {note}" for note in candidate_notes]
         if candidate_sources:

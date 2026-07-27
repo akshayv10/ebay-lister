@@ -56,8 +56,13 @@ you want, then run **Actions → Publish approved eBay drafts** with mode `publi
    the Drafts row, and emails the result.
 
 Drafts are independent: one failing never blocks the others. A draft that fails or gets
-blocked stays editable and re-approvable; a draft that went live can never be published
-twice.
+blocked keeps your edits and your tick so you can correct it and re-run; a draft that
+went live can never be published twice. Products already sitting in review are excluded
+from the next day's sourcing, so you never get two drafts for the same item.
+
+The `dry-run` mode does the same resolution — your edits, the cost re-check, and full
+validation — and just stops before listing. It reports how many drafts *would* publish
+and why the rest would be refused.
 
 > Note: eBay policy compliance is your responsibility. Publishing attaches a
 > mandatory **10% Promoted Listings (General/CPS)** ad to each listing.
@@ -73,7 +78,7 @@ Each draft is one row in the **Drafts** tab. You own these columns:
 
 | Column | What to put in it |
 | --- | --- |
-| `Publish?` | `YES` to approve. Anything else (blank, `NO`) is left alone. |
+| `Publish?` | `YES` to approve. Anything else (blank, `NO`) is left alone. Cleared back to `NO` once the listing is live, so an approval is never left standing. |
 | `Title` | eBay title, max 80 characters. |
 | `Description` | Listing description (HTML is fine). |
 | `Category ID` | Pin an exact eBay category instead of the suggested one. |

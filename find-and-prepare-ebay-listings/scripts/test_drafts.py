@@ -322,11 +322,17 @@ def test_cost_check_survives_a_lookup_failure() -> None:
 
 
 def test_a_hand_set_price_survives_a_cost_refresh() -> None:
+    """The refresh updates the cost but must not overwrite the reviewer's price."""
     source = normalize_source(sample_source())
     source["selected_variants"][0]["price_override"] = "88.00"
     ok, _, refreshed = _with_fake_ali(_FakeAli("14.99"), source)
     assert ok
-    assert refreshed["selected_variants"][0]["delivered_total"] == "24.50"
+    variant = refreshed["selected_variants"][0]
+    # Cost is re-read (14.99 + 4.51 freight) so the override is checked against it...
+    assert variant["delivered_total"] == "19.50"
+    # ...but the price the reviewer chose is untouched.
+    assert variant["price_override"] == "88.00"
+    assert normalize_source(refreshed)["selected_variants"][0]["expected_ebay_price"] == "88.00"
 
 
 # --------------------------------------------------------------- safety properties
@@ -529,6 +535,206 @@ def test_a_stale_draft_is_blocked_before_ebay_is_touched() -> None:
         assert outcome["status"] == "blocked"
         assert stub.seen == {}, "a stale draft must never reach eBay"
         assert draft_store.is_publishable(draft_store.load(draft["draft_id"], directory))
+
+
+# ------------------------------------------------ regressions from PR #12 review
+
+def test_a_price_override_is_validated_against_todays_cost() -> None:
+    """A draft priced when the item was cheap must not list below cost after it rises.
+
+    Cost 100.00 -> 109.00 is inside the 10% drift limit, so the draft is still allowed;
+    but an override of 105.00 is now below cost and must be rejected, not listed.
+    """
+    source = sample_source()
+    source["selected_variants"][0].update({
+        "visible_item_price": "95.49", "delivered_total": "100.00", "price_override": "105.00",
+    })
+    source = normalize_source(source)
+
+    ok, _, refreshed = _with_fake_ali(_FakeAli("104.49"), source)  # +4.51 freight = 109.00
+    assert ok, "9% drift is within the limit, so the draft itself is not blocked"
+    assert refreshed["selected_variants"][0]["delivered_total"] == "109.00", \
+        "the delivered cost must be refreshed even when an override is set"
+    try:
+        normalize_source(refreshed)
+    except JobError as exc:
+        assert "delivered cost" in str(exc)
+    else:  # pragma: no cover - this is the money-losing path
+        raise AssertionError("a now-below-cost override must be rejected")
+
+
+def test_multi_variant_costs_are_rechecked_per_variation() -> None:
+    class _FakeVariantAli(_FakeAli):
+        def __init__(self, records):
+            super().__init__("19.99")
+            self.records = records
+
+        def variant_records(self, product_id):
+            return "Color", self.records
+
+    source = sample_source()
+    source["selected_variants"] = [
+        {"id": "red", "options": {"Color": "Red"}, "visible_item_price": "19.99",
+         "delivered_total": "24.50", "quantity": 1},
+        {"id": "blue", "options": {"Color": "Blue"}, "visible_item_price": "21.00",
+         "delivered_total": "25.75", "quantity": 1},
+    ]
+    source = normalize_source(source)
+
+    # One variation's cost jumped well past the limit.
+    ok, message, _ = _with_fake_ali(_FakeVariantAli([
+        {"id": "red", "visible_item_price": "19.99", "delivered_total": "24.50"},
+        {"id": "blue", "visible_item_price": "40.00", "delivered_total": "44.00"},
+    ]), source)
+    assert not ok
+    assert "blue" in message and "rose" in message
+
+    # A variation that disappeared is also a blocker, not a silent listing.
+    ok, message, _ = _with_fake_ali(_FakeVariantAli([
+        {"id": "red", "visible_item_price": "19.99", "delivered_total": "24.50"},
+    ]), normalize_source(sample_source(selected_variants=[
+        {"id": "red", "options": {"Color": "Red"}, "visible_item_price": "19.99",
+         "delivered_total": "24.50", "quantity": 1},
+        {"id": "blue", "options": {"Color": "Blue"}, "visible_item_price": "21.00",
+         "delivered_total": "25.75", "quantity": 1},
+    ])))
+    assert not ok
+    assert "no longer offered" in message
+
+
+def test_dry_run_reports_invalid_edits_instead_of_passing_them() -> None:
+    """The dry run must resolve edits for real, or it green-lights a broken draft."""
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp)
+        draft = sample_draft(directory)
+        row = _row_for(draft, **{"Price Override USD": "24.50"})  # at cost — invalid
+
+        original_dir, original_ali = draft_store.DRAFT_DIR, publish_drafts.ali_api
+        original_read = draft_sheet.read_approved
+        draft_store.DRAFT_DIR = directory
+        publish_drafts.ali_api = _FakeAli("19.99")
+        draft_sheet.read_approved = lambda **kw: [
+            {"draft_id": draft["draft_id"], "row": 2, "values": row}
+        ]
+        try:
+            result = publish_drafts.run(live=False)
+        finally:
+            draft_store.DRAFT_DIR = original_dir
+            publish_drafts.ali_api = original_ali
+            draft_sheet.read_approved = original_read
+
+        assert result["products"], "the dry run must report on each approved draft"
+        assert "delivered cost" in result["products"][0]["reason"], \
+            "an invalid override must surface in dry run, not only at publish time"
+        assert "0 of 1" in result["error"]
+        # The dry run must not have changed any draft's state.
+        assert draft_store.load(draft["draft_id"], directory)["status"] == "draft"
+
+
+def test_dry_run_leaves_a_valid_draft_untouched() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp)
+        draft = sample_draft(directory)
+        row = _row_for(draft, **{"Title": "A perfectly good title"})
+
+        original_dir, original_ali = draft_store.DRAFT_DIR, publish_drafts.ali_api
+        original_read = draft_sheet.read_approved
+        draft_store.DRAFT_DIR = directory
+        publish_drafts.ali_api = _FakeAli("19.99")
+        draft_sheet.read_approved = lambda **kw: [
+            {"draft_id": draft["draft_id"], "row": 2, "values": row}
+        ]
+        try:
+            result = publish_drafts.run(live=False)
+        finally:
+            draft_store.DRAFT_DIR = original_dir
+            publish_drafts.ali_api = original_ali
+            draft_sheet.read_approved = original_read
+
+        assert result["products"][0]["reason"] == "would publish"
+        assert result["products"][0]["title"] == "A perfectly good title"
+        assert "1 of 1" in result["error"]
+
+
+def test_a_failed_publish_keeps_the_reviewers_edits() -> None:
+    """The reviewer must not lose their work exactly when they need to fix it."""
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp)
+        draft = sample_draft(directory)
+        row = _row_for(draft, **{
+            "Title": "Carefully Hand-Written Title",
+            "Images": "https://ae01.alicdn.com/kf/a.jpg\nhttps://ae01.alicdn.com/kf/spare.jpg",
+        })
+        edits = draft_sheet.row_edits(row, draft)
+        _publish(draft, edits, _StubListOne(fail="eBay said no"), directory)
+
+        stored = draft_store.load(draft["draft_id"], directory)
+        assert stored["source"]["listing_title"] == "Carefully Hand-Written Title"
+        assert "https://ae01.alicdn.com/kf/spare.jpg" in stored["source"]["source_images"]
+        # And the row rebuilt from it carries those edits plus the reviewer's tick.
+        rebuilt = draft_sheet.draft_row(stored, "YES")
+        assert rebuilt[draft_sheet.COL["Title"]] == "Carefully Hand-Written Title"
+        assert rebuilt[draft_sheet.COL["Publish?"]] == "YES"
+        assert rebuilt[draft_sheet.COL["Publish Error"]] == "eBay said no"
+
+
+def test_a_live_draft_loses_its_standing_approval() -> None:
+    """A YES left next to a live listing is what would let it publish twice."""
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp)
+        draft = sample_draft(directory)
+        draft_store.mark(draft, draft_store.STATUS_LIVE, directory=directory, listing_id="1")
+        assert draft_sheet.draft_row(draft, "YES")[draft_sheet.COL["Publish?"]] == "NO"
+        # A still-pending draft keeps whatever the reviewer typed.
+        pending_draft = sample_draft(directory)
+        assert draft_sheet.draft_row(pending_draft, "YES")[draft_sheet.COL["Publish?"]] == "YES"
+        assert draft_sheet.draft_row(pending_draft)[draft_sheet.COL["Publish?"]] == "NO"
+
+
+def test_drafted_products_are_excluded_from_the_next_sourcing_run() -> None:
+    """Otherwise the same product is drafted again tomorrow and listed twice."""
+    from daily_history import same_record
+
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp)
+        draft = sample_draft(directory)
+        views = draft_store.history_views(directory)
+        assert views, "a saved draft must produce an exclusion view"
+
+        # The view must match the same candidate that sourcing would build tomorrow.
+        candidate = {
+            "aliexpress_url": draft["source"]["aliexpress_url"],
+            "functional_fingerprint": draft["source"]["functional_fingerprint"],
+            "product_title": draft["source"]["source_title"],
+        }
+        assert any(same_record(view, candidate) for view in views)
+
+        unrelated = {
+            "aliexpress_url": "https://www.aliexpress.us/item/1005009999999999.html",
+            "functional_fingerprint": "garden hose reel",
+            "product_title": "Garden Hose Reel Wall Mounted",
+        }
+        assert not any(same_record(view, unrelated) for view in views)
+
+
+def test_daily_run_feeds_drafts_into_the_sourcing_exclusion_set() -> None:
+    source = (SCRIPTS / "daily_run.py").read_text(encoding="utf-8")
+    assert "draft_store.history_views()" in source
+    assert "sourcing_history" in source
+    assert "local_date, sourcing_history" in source, "source_products must get the augmented set"
+    assert "niche_priority(history," in source, "niche rotation must still use real history only"
+
+
+def test_state_committing_workflows_share_a_concurrency_group() -> None:
+    """Overlapping state/ pushes can resurrect an already-published draft."""
+    workflows = SCRIPTS.parent.parent / ".github" / "workflows"
+    daily = (workflows / "daily.yml").read_text(encoding="utf-8")
+    publish = (workflows / "publish-drafts.yml").read_text(encoding="utf-8")
+    assert "group: ebay-lister-state" in daily
+    assert "group: ebay-lister-state" in publish
+    for text in (daily, publish):
+        assert "git pull --rebase origin" in text, "a rejected push must be retried"
+        assert "::error::" in text, "an unrecoverable push must fail the job, not pass silently"
 
 
 # ------------------------------------------------------------------------ rendering

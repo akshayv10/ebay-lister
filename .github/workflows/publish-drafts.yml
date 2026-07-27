@@ -29,8 +29,10 @@ on:
 permissions:
   contents: write   # commits the updated draft state + listing history back to the repo
 
+# Shared with daily.yml — see the note there. These two workflows must never commit
+# state/ concurrently, or a rejected push can resurrect an already-published draft.
 concurrency:
-  group: ebay-publish-drafts
+  group: ebay-lister-state
   cancel-in-progress: false
 
 jobs:
@@ -94,8 +96,13 @@ jobs:
             python find-and-prepare-ebay-listings/scripts/publish_drafts.py $ARGS
           fi
 
+      # This commit is what records that a draft went live. Losing it would leave the
+      # draft marked publishable, so a later run could list the same product again —
+      # retry on rejection, and fail loudly rather than silently if it never lands.
       - name: Persist draft state and listing history
         if: always()
+        env:
+          BRANCH: ${{ github.ref_name }}
         run: |
           mkdir -p state
           date -u +"%Y-%m-%dT%H:%M:%SZ" > state/last-run.txt
@@ -104,7 +111,17 @@ jobs:
           git add state
           if git diff --cached --quiet; then
             echo "No draft or history changes to commit."
-          else
-            git commit -m "publish approved drafts $(date -u +%F)"
-            git push
+            exit 0
           fi
+          git commit -m "publish approved drafts $(date -u +%F)"
+          for attempt in 1 2 3 4 5; do
+            if git push origin "HEAD:$BRANCH"; then
+              echo "Persisted draft state on attempt $attempt."
+              exit 0
+            fi
+            echo "Push rejected; rebasing onto origin/$BRANCH and retrying ($attempt)."
+            git pull --rebase origin "$BRANCH" || true
+            sleep $((attempt * 3))
+          done
+          echo "::error::Could not persist state/ after publishing. A published draft may still be marked publishable — inspect state/drafts/ and the Drafts tab before the next publish run."
+          exit 1

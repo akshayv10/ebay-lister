@@ -191,8 +191,14 @@ def parse_variants(text: str, template: list[dict[str, Any]] | None = None) -> l
 
 # ------------------------------------------------------------------------------- rows
 
-def draft_row(draft: dict[str, Any]) -> list[Any]:
-    """Flatten a stored draft into its sheet row."""
+def draft_row(draft: dict[str, Any], publish_cell: str | None = None) -> list[Any]:
+    """Flatten a stored draft into its sheet row.
+
+    ``publish_cell`` carries the reviewer's current tick through a refresh. A draft that
+    went live always comes back as "NO": the approval has been spent, and leaving a
+    standing YES next to a live listing is what would let it be published twice if the
+    draft record ever reverted.
+    """
     source = draft.get("source", {}) or {}
     variants = source.get("selected_variants") or []
     first = variants[0] if variants else {}
@@ -200,9 +206,10 @@ def draft_row(draft: dict[str, Any]) -> list[Any]:
     thumbnail = f'=IMAGE("{images[0]}")' if images else ""
     warnings = list((draft.get("validation") or {}).get("warnings") or []) + list(draft.get("notes") or [])
     override = first.get("price_override", "")
+    approved = "NO" if draft.get("status") == "live" else str(publish_cell or "NO")
     return [
         draft.get("draft_id", ""),
-        "YES" if draft.get("status") == "live" else "NO",
+        approved,
         draft.get("status", ""),
         draft.get("created_at", ""),
         source.get("assigned_niche", ""),
@@ -287,17 +294,30 @@ def apply_edits(draft: dict[str, Any], edits: dict[str, Any]) -> dict[str, Any]:
 
 # ----------------------------------------------------------------------------- syncing
 
-def sync_drafts(drafts: list[dict[str, Any]], *, client_factory=client) -> dict[str, Any]:
+def sync_drafts(
+    drafts: list[dict[str, Any]],
+    *,
+    client_factory=client,
+    publish_cells: dict[str, str] | None = None,
+) -> dict[str, Any]:
     """Upsert one row per draft. Never raises — a Sheets outage must not lose a draft,
-    which is already safely on disk under state/drafts/."""
+    which is already safely on disk under state/drafts/.
+
+    ``publish_cells`` maps draft ID to the reviewer's current Publish? value, so a
+    status refresh after a failed publish does not silently un-approve the row.
+    """
     if disabled():
         return {"status": "skipped", "written": 0, "error": "DRAFT_SHEET_DISABLED"}
     if not drafts:
         return {"status": "synced", "written": 0, "error": ""}
+    ticks = publish_cells or {}
     try:
         sheet = client_factory()
         written = sheet.upsert_rows(
-            [(str(draft["draft_id"]), draft_row(draft)) for draft in drafts],
+            [
+                (str(draft["draft_id"]), draft_row(draft, ticks.get(str(draft["draft_id"]))))
+                for draft in drafts
+            ],
             # USER_ENTERED so the Thumbnail =IMAGE() formula renders as a picture.
             value_input="USER_ENTERED",
         )

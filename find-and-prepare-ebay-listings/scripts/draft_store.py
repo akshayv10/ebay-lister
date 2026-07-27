@@ -150,6 +150,33 @@ def is_publishable(draft: dict[str, Any]) -> bool:
     return draft.get("status") in PUBLISHABLE_STATUSES and not draft.get("published")
 
 
+def history_views(directory: Path | None = None) -> list[dict[str, Any]]:
+    """Every drafted product, shaped like a history record for de-duplication.
+
+    Sourcing de-duplicates against listing history (``daily_history.same_record``), which
+    only knows about products that actually went live. A product sitting in review is
+    invisible to it, so the next day's run would happily draft the same product again —
+    and both drafts would be independently publishable, producing two eBay listings for
+    one product. Feeding these views into the exclusion set closes that.
+
+    Every draft counts, whatever its status: a live one is already in history (harmless
+    overlap), and a blocked or rejected one is precisely something not to re-source.
+    """
+    views: list[dict[str, Any]] = []
+    for draft in load_all(directory):
+        source = draft.get("source", {}) or {}
+        url = str(source.get("aliexpress_url", "")).strip()
+        title = str(source.get("source_title") or source.get("listing_title") or "").strip()
+        if not url and not title:
+            continue
+        views.append({
+            "aliexpress_url": url,
+            "functional_fingerprint": str(source.get("functional_fingerprint", "")).strip(),
+            "product_title": title,
+        })
+    return views
+
+
 def mark(
     draft: dict[str, Any],
     status: str,

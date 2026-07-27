@@ -32,8 +32,12 @@ on:
 permissions:
   contents: write   # allows committing updated history back to the repo
 
+# Shared with publish-drafts.yml on purpose. Both jobs commit and push state/ (draft
+# records and listing history). If they overlapped, one push would be rejected — and a
+# lost publish commit would leave a draft marked publishable after its listing already
+# went live, so the next approved run would list it a second time.
 concurrency:
-  group: daily-ebay-lister
+  group: ebay-lister-state
   cancel-in-progress: false
 
 jobs:
@@ -124,8 +128,12 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.mode == 'email-test'
         run: python find-and-prepare-ebay-listings/scripts/notify.py --test
 
+      # Drafts live under state/, so this commit is now load-bearing: losing it would
+      # drop a draft the review email already announced. Retry on rejection.
       - name: Heartbeat + persist history
         if: always()
+        env:
+          BRANCH: ${{ github.ref_name }}
         run: |
           mkdir -p state
           date -u +"%Y-%m-%dT%H:%M:%SZ" > state/last-run.txt
@@ -134,7 +142,17 @@ jobs:
           git add state
           if git diff --cached --quiet; then
             echo "No history changes to commit."
-          else
-            git commit -m "daily run heartbeat + history $(date -u +%F)"
-            git push
+            exit 0
           fi
+          git commit -m "daily run heartbeat + history $(date -u +%F)"
+          for attempt in 1 2 3 4 5; do
+            if git push origin "HEAD:$BRANCH"; then
+              echo "Persisted state on attempt $attempt."
+              exit 0
+            fi
+            echo "Push rejected; rebasing onto origin/$BRANCH and retrying ($attempt)."
+            git pull --rebase origin "$BRANCH" || true
+            sleep $((attempt * 3))
+          done
+          echo "::error::Could not persist state/ — drafts from this run may be missing on the next run."
+          exit 1
