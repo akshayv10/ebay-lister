@@ -85,6 +85,43 @@ def test_workflow_has_no_kill_switch() -> None:
     assert "LIVE_LISTING" not in text, "LIVE_LISTING kill switch must not return"
 
 
+def test_every_test_function_is_actually_collected() -> None:
+    """Guard against tests that silently never run.
+
+    These files are plain scripts: `_run_all` collects `test_*` out of `globals()` at
+    the bottom of the file. That gives two ways to write a test that is never executed
+    and so always "passes" — both of which have already happened here:
+
+      * defining it below `_run_all`, where globals() has not seen it yet;
+      * giving it a *required* pytest fixture parameter (`monkeypatch`), which the runner
+        cannot supply, so the call raises TypeError instead of testing anything. A
+        parameter with a default (`tmp_path: Path | None = None`) is fine — it runs.
+
+    A test that cannot fail is worse than no test, so fail the suite on either shape.
+    """
+    for path in sorted(SCRIPTS.glob("test_*.py")):
+        text = path.read_text(encoding="utf-8")
+        if "def _run_all(" not in text:
+            continue  # unittest-based (test_skill.py) — unittest does its own discovery
+        runner_at = text.index("def _run_all(")
+        found = False
+        for match in re.finditer(r"^def (test_\w+)\(([^)]*)\)", text, re.M):
+            found = True
+            name, params = match.group(1), match.group(2).strip()
+            assert match.start() < runner_at, (
+                f"{path.name}: {name} is defined below _run_all and will never be collected"
+            )
+            required = [
+                part.strip() for part in params.split(",")
+                if part.strip() and "=" not in part
+            ]
+            assert not required, (
+                f"{path.name}: {name} requires {', '.join(required)!r}, but the "
+                "plain-script runner passes no arguments — it would error, not test"
+            )
+        assert found, f"{path.name} defines no module-level test functions"
+
+
 def _run_all() -> int:
     tests = [v for n, v in sorted(globals().items()) if n.startswith("test_") and callable(v)]
     failures = 0
