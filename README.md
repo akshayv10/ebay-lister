@@ -287,6 +287,18 @@ python3 inbox_poll.py            # dry-run poll of the inbox
 
 ## Testing offline (no network, no eBay)
 
+Every `test_*.py` runs automatically on pull requests and pushes to `main`
+(`.github/workflows/tests.yml`). No secrets are provided to that job, so a test that
+tried to reach a real API would fail rather than do something real. To run the same
+thing locally:
+
+```bash
+cd find-and-prepare-ebay-listings/scripts
+for t in test_*.py; do python3 "$t" || echo "FAILED: $t"; done
+```
+
+Individually:
+
 ```bash
 cd find-and-prepare-ebay-listings/scripts
 python3 test_ali_api.py            # sourcing/gates/mapping

@@ -4,14 +4,44 @@ Never hits the network (fixture mode)."""
 
 from __future__ import annotations
 
+import contextlib
 import os
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 import ali_api
 from listing_job import normalize_source
 
 FIXTURE = Path(__file__).with_name("fixtures") / "ali_sample.json"
+
+
+@contextlib.contextmanager
+def _patch(*, setenv: dict[str, str] | None = None, delenv: tuple[str, ...] = (), **attrs: Any):
+    """Minimal stand-in for pytest's monkeypatch fixture.
+
+    These files run as plain scripts (see _run_all below), so a test taking a
+    ``monkeypatch`` argument is silently never executed. Patch through this instead;
+    everything is restored on exit.
+    """
+    saved_env = {key: os.environ.get(key) for key in list(setenv or {}) + list(delenv)}
+    saved_attrs = {name: getattr(ali_api, name) for name in attrs}
+    try:
+        for key, value in (setenv or {}).items():
+            os.environ[key] = value
+        for key in delenv:
+            os.environ.pop(key, None)
+        for name, value in attrs.items():
+            setattr(ali_api, name, value)
+        yield
+    finally:
+        for key, value in saved_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        for name, value in saved_attrs.items():
+            setattr(ali_api, name, value)
 
 
 def _details() -> list[dict]:
@@ -156,7 +186,7 @@ def test_string_list_reads_feed_image_key() -> None:
     assert flat["images"] == ["https://x/main.jpg", "https://x/a.jpg", "https://x/b.jpg", "https://x/c.jpg"]
 
 
-def test_detail_enrichment_uses_fuller_gallery(monkeypatch) -> None:
+def test_detail_enrichment_uses_fuller_gallery() -> None:
     # A feed card only has 1 image and no review count, so with a token configured the
     # sourcing loop enriches via get_product_detail() for rating/reviews. That same detail
     # response's gallery (3 images) must be merged into the feed's 1-image list (not
@@ -170,16 +200,17 @@ def test_detail_enrichment_uses_fuller_gallery(monkeypatch) -> None:
         "product_main_image_url": "https://x/main.jpg",
     }
     detail = _details()[0]
-    monkeypatch.setenv("ALIEXPRESS_ACCESS_TOKEN", "test-token")
-    monkeypatch.delenv("ALI_API_FIXTURE", raising=False)
-    monkeypatch.setattr(ali_api, "discover", lambda niche, page: [feed_card] if page == 1 else [])
-    monkeypatch.setattr(ali_api, "niche_feeds", lambda niche: ["fake_feed"])
-    monkeypatch.setattr(ali_api, "get_product_detail", lambda product_id: detail)
-
-    sources, _ = ali_api.source_products(
-        "Smartphone Accessories", "20260722T090000", "2026-07-22", history=[], needed=1,
-        ebay_client=_FakeEbayClient(active=0),
-    )
+    with _patch(
+        setenv={"ALIEXPRESS_ACCESS_TOKEN": "test-token"},
+        delenv=("ALI_API_FIXTURE",),
+        discover=lambda niche, page: [feed_card] if page == 1 else [],
+        niche_feeds=lambda niche: ["fake_feed"],
+        get_product_detail=lambda product_id: detail,
+    ):
+        sources, _ = ali_api.source_products(
+            "Smartphone Accessories", "20260722T090000", "2026-07-22", history=[], needed=1,
+            ebay_client=_FakeEbayClient(active=0),
+        )
     assert len(sources) == 1
     images = sources[0]["source_images"]
     assert "https://x/main.jpg" in images  # feed image preserved
