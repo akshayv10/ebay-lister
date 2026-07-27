@@ -518,6 +518,84 @@ def variant_records(product_id: str) -> tuple[str, list[dict[str, Any]]]:
     return axis, records
 
 
+# AliExpress CDN image URLs embedded in the public product page. The DS API returns only
+# the main gallery (and per-SKU thumbnails when a seller token is configured), so the
+# description and lifestyle shots are reachable only from the page itself.
+_PAGE_IMAGE_RE = re.compile(
+    r"https?://ae\d{2}\.alicdn\.com/kf/[A-Za-z0-9_\-./]+?\.(?:jpg|jpeg|png|webp)",
+    re.IGNORECASE,
+)
+# AliExpress appends a size/format suffix (…_220x220.jpg_.webp). Strip it for the
+# full-resolution original, which is what eBay should host.
+_IMAGE_SUFFIX_RE = re.compile(r"_\d+x\d+(?:q\d+)?\.(?:jpg|jpeg|png|webp)(?:_\.webp)?$", re.IGNORECASE)
+
+
+def _canonical_image(url: str) -> str:
+    cleaned = _https(url)
+    stripped = _IMAGE_SUFFIX_RE.sub("", cleaned)
+    # Only keep the stripped form when it still ends in a real image extension.
+    return stripped if re.search(r"\.(?:jpg|jpeg|png|webp)$", stripped, re.IGNORECASE) else cleaned
+
+
+def page_images(product_id: str, timeout: int = 20) -> list[str]:
+    """Best-effort: scrape every product image from the public AliExpress page.
+
+    This is how we recover the photos ``ds.product.get`` will not return without a seller
+    token. It is advisory only — the result populates a read-only "spare images" column
+    for a human to choose from, and is never added to a listing automatically. Any
+    failure (blocked, geo-gated, markup change) returns an empty list.
+    """
+    request = urllib.request.Request(
+        detail_url(product_id),
+        method="GET",
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+            ),
+            "Accept-Language": "en-US,en;q=0.9",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            body = response.read().decode("utf-8", errors="replace")
+    except Exception:  # noqa: BLE001 - advisory only; never let this break a run
+        return []
+    seen: set[str] = set()
+    found: list[str] = []
+    for raw in _PAGE_IMAGE_RE.findall(body):
+        url = _canonical_image(raw)
+        if url.startswith("https://") and url not in seen:
+            seen.add(url)
+            found.append(url)
+    return found[:MAX_IMAGES]
+
+
+def spare_images(product_id: str, already_used: list[str]) -> list[str]:
+    """Images we know about that the listing is not currently using.
+
+    Merges per-SKU variant thumbnails (seller token only) with a scrape of the public
+    product page, minus whatever ``already_used`` holds. Advisory suggestions only.
+    """
+    used = {_canonical_image(url) for url in already_used or []}
+    used |= {(url or "").strip() for url in already_used or []}
+    candidates: list[str] = []
+    try:
+        _, records = variant_records(product_id)
+        candidates += [record.get("image", "") for record in records if record.get("image")]
+    except Exception:  # noqa: BLE001 - no token / API error
+        pass
+    candidates += page_images(product_id)
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in candidates:
+        url = _canonical_image(raw)
+        if url.startswith("https://") and url not in used and url not in seen:
+            seen.add(url)
+            out.append(url)
+    return out[:MAX_IMAGES]
+
+
 def _first_id_anywhere(payload: Any) -> str:
     for pid in _candidate_ids(payload):
         return pid

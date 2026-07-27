@@ -141,6 +141,68 @@ def compose(result: dict[str, Any]) -> tuple[str, str, str]:
     return subject, text_body, html_body
 
 
+def compose_drafts(result: dict[str, Any]) -> tuple[str, str, str]:
+    """Return (subject, text_body, html_body) for a draft run.
+
+    The HTML body is the rendered review page itself, so the listing can be verified from
+    the email without opening anything. The text part carries the same facts plus the
+    two-step instruction for approving.
+    """
+    date = str(result.get("date", ""))
+    niche = str(result.get("niche", ""))
+    drafts = result.get("drafts", []) or []
+    count = int(result.get("draft_count", len(drafts)))
+    sheet_url = str(result.get("sheet_url") or os.environ.get("SHEETS_SPREADSHEET_URL", ""))
+    subject = f"📝 eBay drafts {date}: {count} ready to review"
+    if not count:
+        subject = f"❌ eBay drafts {date}: nothing drafted"
+
+    lines = [
+        f"eBay listing drafts — {date}",
+        f"Niche: {niche}",
+        f"{count} draft(s) ready for review. NOTHING IS LIVE and nothing was created on eBay.",
+        "",
+    ]
+    for index, draft in enumerate(drafts, 1):
+        source = draft.get("source", {}) or {}
+        variant = (source.get("selected_variants") or [{}])[0]
+        lines.append(f"Draft {index}: {source.get('listing_title', '(untitled)')}")
+        lines.append(f"  Draft ID: {draft.get('draft_id', '')}")
+        lines.append(f"  Cost: USD {variant.get('delivered_total', '')}"
+                     f"  →  eBay price: USD {variant.get('expected_ebay_price', '')}")
+        lines.append(f"  Images: {len(source.get('source_images') or [])}"
+                     f" ({len(draft.get('spare_images') or [])} spare available)")
+        lines.append(f"  AliExpress: {source.get('aliexpress_url', '(n/a)')}")
+        warnings = list((draft.get("validation") or {}).get("warnings") or []) + list(draft.get("notes") or [])
+        for warning in warnings:
+            lines.append(f"  ! {warning}")
+        lines.append("")
+    lines += [
+        "To publish:",
+        f"  1. Open the Drafts tab and edit anything you want: {sheet_url}",
+        "  2. Set Publish? to YES on the rows you approve.",
+        "  3. Run the 'Publish drafts' workflow in GitHub Actions.",
+        "",
+    ]
+    sheet = result.get("draft_sheet") or {}
+    if sheet.get("error"):
+        lines += [f"Drafts sheet error: {sheet['error']}", ""]
+    if result.get("error"):
+        lines += ["Error:", str(result["error"]), ""]
+    notes = result.get("notes") or []
+    if notes:
+        lines += ["Notes:"] + [f"  - {note}" for note in notes[:20]]
+    text_body = "\n".join(lines)
+
+    html_body = str(result.get("preview_html") or "")
+    if not html_body:
+        html_body = (
+            f"<h2>📝 {count} eBay listing draft(s) ready — {html.escape(date)}</h2>"
+            f"<pre>{html.escape(text_body)}</pre>"
+        )
+    return subject, text_body, html_body
+
+
 def _send_smtp(subject: str, text_body: str, html_body: str, to_addr: str) -> None:
     host = os.environ.get("SMTP_HOST", "smtp.gmail.com")
     port = int(os.environ.get("SMTP_PORT", "587"))
@@ -187,15 +249,23 @@ def _send_sendgrid(subject: str, text_body: str, html_body: str, to_addr: str) -
         raise NotifyError(f"SendGrid send failed: {exc}") from exc
 
 
-def send(result: dict[str, Any]) -> None:
+def _deliver(subject: str, text_body: str, html_body: str) -> None:
     to_addr = os.environ.get("NOTIFY_EMAIL", "").strip()
     if not to_addr:
         raise NotifyError("NOTIFY_EMAIL is not set")
-    subject, text_body, html_body = compose(result)
     if os.environ.get("SENDGRID_API_KEY", "").strip():
         _send_sendgrid(subject, text_body, html_body, to_addr)
     else:
         _send_smtp(subject, text_body, html_body, to_addr)
+
+
+def send(result: dict[str, Any]) -> None:
+    _deliver(*compose(result))
+
+
+def send_drafts(result: dict[str, Any]) -> None:
+    """Notify that drafts are waiting for review. Nothing has been listed."""
+    _deliver(*compose_drafts(result))
 
 
 def main() -> int:

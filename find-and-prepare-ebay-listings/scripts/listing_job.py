@@ -100,6 +100,13 @@ def normalize_source(source: dict[str, Any], min_visible_price: Decimal = ali_ap
     if normalized["condition"] != "NEW":
         raise JobError("API v1 supports only condition NEW for this sourcing workflow")
     normalized["category_query"] = str(source.get("category_query") or normalized["listing_title"]).strip()
+    # A reviewer can pin an exact eBay category on a draft instead of trusting the
+    # Taxonomy suggestion; category_and_aspects honours this when present.
+    category_override = str(source.get("category_id_override", "")).strip()
+    if category_override:
+        if not category_override.isdigit():
+            raise JobError("category_id_override must be a numeric eBay category ID")
+        normalized["category_id_override"] = category_override
 
     raw_aspects = source.get("aspects")
     if not isinstance(raw_aspects, dict) or not raw_aspects:
@@ -153,6 +160,17 @@ def normalize_source(source: dict[str, Any], min_visible_price: Decimal = ali_ap
             raise JobError("Selected variants collide after deterministic SKU normalization")
         seen_skus.add(sku)
         expected = Decimal(str(quote(float(delivered))["suggested_price"]))
+        # A reviewed draft may carry a hand-set price. Without this the sheet's price
+        # column would be silently discarded, because the quote above always wins.
+        override = item.get("price_override")
+        if str(override or "").strip():
+            override_price = decimal_value(override, f"{variant_id}.price_override")
+            if override_price <= delivered:
+                raise JobError(
+                    f"Variant {variant_id} price override USD {override_price:.2f} is at or below "
+                    f"the delivered cost USD {delivered:.2f}"
+                )
+            expected = override_price
         record = {
             "id": variant_id,
             "sku": sku,
@@ -162,6 +180,8 @@ def normalize_source(source: dict[str, Any], min_visible_price: Decimal = ali_ap
             "expected_ebay_price": f"{expected:.2f}",
             "quantity": 1,
         }
+        if str(override or "").strip():
+            record["price_override"] = f"{expected:.2f}"
         # Optional per-variation photo, so eBay swaps the image with the selection.
         if str(item.get("image", "")).strip():
             record["image"] = https_url(item["image"], f"{variant_id}.image")
