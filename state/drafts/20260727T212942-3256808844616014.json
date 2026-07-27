@@ -1,0 +1,131 @@
+{
+  "created_at": "2026-07-27T16:00:52Z",
+  "draft_id": "20260727T212942-3256808844616014",
+  "ebay_url": "",
+  "listing_id": "",
+  "notes": [],
+  "product_id": "3256808844616014",
+  "publish_allowed": false,
+  "publish_error": "",
+  "published": false,
+  "run_stamp": "20260727T212942",
+  "source": {
+    "aliexpress_orders": 6723.0,
+    "aliexpress_rating": 4.63,
+    "aliexpress_url": "https://www.aliexpress.us/item/3256808844616014.html",
+    "appeal_reason": "top seller in niche (6723 orders)",
+    "appeal_score": 6723.0,
+    "aspects": {
+      "Brand": [
+        "Unbranded"
+      ],
+      "Color": [
+        "Mint Green"
+      ],
+      "Compatible Brand": [
+        "N/A"
+      ],
+      "Custom Bundle": [
+        "No"
+      ],
+      "Features": [
+        "Removable Battery, Disc Brakes, Front Suspension"
+      ],
+      "MPN": [
+        "N/A"
+      ],
+      "Material": [
+        "High Carbon Steel and Alloy"
+      ],
+      "Model": [
+        "MileCity 1"
+      ],
+      "Modified Item": [
+        "No"
+      ],
+      "Number of Items": [
+        "1"
+      ],
+      "Type": [
+        "Electric Bike"
+      ]
+    },
+    "assigned_niche": "Automotive Parts & Accessories",
+    "category_query": "MileCity 1 26 \"Electric Bike for Comuting, 120km Range, 250W, 36V 13Ah Battery,",
+    "condition": "NEW",
+    "functional_fingerprint": "milecity 1 26 electric bike for comuting 120km range 250w 36v 13ah battery speed 25 km h 7 gears disc brakes e bike",
+    "inventory_item_group_key": "",
+    "listing_description": "<p>Experience effortless commuting with the MileCity 1 Electric Bike featuring a powerful 250W motor and a 36V 13Ah removable battery delivering up to 100 km (62 miles) per charge.</p><p>This electric bike solves the need for a reliable, eco-friendly transportation option suitable for urban environments by combining durability, long battery life, and smooth gear shifting in a stylish, step-through ergonomic frame.</p><h3>Key Features</h3><ul><li><strong>Long Range:</strong> Enjoy up to 100 km (62 miles) on a single charge via the 36V 13Ah removable battery.</li><li><strong>Powerful Motor:</strong> 250W motor providing 42 Nm torque for smooth acceleration and climbing.</li><li><strong>Seven-Speed Gear System:</strong> 7-speed Shimano shifter for easy adjustment to various terrains and speeds.</li><li><strong>Durable Build:</strong> High-carbon steel step-through frame offering stability, safety, and comfort.</li><li><strong>Efficient Braking & Suspension:</strong> Front suspension fork and disc brakes for optimal safety and shock absorption.</li></ul><hr><h3>Specifications</h3><ul><li>Wheel Size: 26 inches (66 cm)</li><li>Total Length: 168.5 cm (66.33 in)</li><li>Wheelbase: 102.7 cm (40.43 in)</li><li>Max Handlebar Height: 98 cm (38.58 in)</li><li>Min Handlebar Height: 96 cm (37.79 in)</li><li>Max Seat Height: 97 cm (38.18 in)</li><li>Min Seat Height: 77 cm (30.31 in)</li><li>Standover Height: 44 cm (17.32 in)</li><li>Reach: 62.5 cm (24.6 in)</li><li>Bike Weight: 26.85 kg (59.1 lbs)</li><li>Max Load Capacity: 120 kg (265 lbs)</li><li>Speed: Up to 25 km/h (15.5 mph)</li><li>Water Resistance: IP65 waterproof rating</li><li>Display: Colorful LED LCD</li><li>Material: High-carbon steel frame, alloy components</li><li>Color: Mint green with black accents</li></ul>",
+    "listing_title": "MileCity 1 26\" Electric Bike 250W, 36V 13Ah Battery, 100km Range, 7-Speed, Disc",
+    "local_calendar_date": "2026-07-27",
+    "mode": "ebay_api",
+    "product_id": "3256808844616014",
+    "run_id": "20260727T212942-product-3256808844616014",
+    "selected_variants": [
+      {
+        "delivered_total": "661.40",
+        "expected_ebay_price": "2475.00",
+        "id": "default",
+        "options": {},
+        "quantity": 1,
+        "sku": "ALI-3256808844616014-default-37a8eec1",
+        "visible_item_price": "661.40"
+      }
+    ],
+    "source_images": [
+      "https://ae-pic-a1.aliexpress-media.com/kf/S67b81ec1b8484fd8951eef4427660403I.jpg",
+      "https://ae-pic-a1.aliexpress-media.com/kf/Sf937574c0534431bb300cdf106f08f9cW.jpg",
+      "https://ae-pic-a1.aliexpress-media.com/kf/S738c08559cfd4ccc8a670d65f08c8367Q.jpg",
+      "https://ae-pic-a1.aliexpress-media.com/kf/S68970240cf7d41fca0d67343b477628be.jpg",
+      "https://ae-pic-a1.aliexpress-media.com/kf/S8d6809edcc1947b0ad46ddf0fdad07daj.jpg",
+      "https://ae-pic-a1.aliexpress-media.com/kf/Sec608ba6cd4d43af9e12443e4b4e943fO.jpg"
+    ],
+    "source_title": "MileCity 1 26 \"Electric Bike for Comuting, 120km Range, 250W, 36V 13Ah Battery, Speed 25 km/h, 7 Gears, Disc Brakes E-bike",
+    "verified_brand": "Unbranded"
+  },
+  "spare_images": [],
+  "status": "draft",
+  "updated_at": "2026-07-27T16:00:52Z",
+  "validation": {
+    "category_id": "74469",
+    "normalized_aspects": {
+      "Bike Type": [
+        "E-Cargo Bike"
+      ],
+      "Brand": [
+        "Unbranded"
+      ],
+      "Color": [
+        "Mint Green"
+      ],
+      "Compatible Brand": [
+        "N/A"
+      ],
+      "Custom Bundle": [
+        "No"
+      ],
+      "Features": [
+        "Removable Battery, Disc Brakes, Front Suspension"
+      ],
+      "MPN": [
+        "N/A"
+      ],
+      "Material": [
+        "High Carbon Steel and Alloy"
+      ],
+      "Model": [
+        "MileCity 1"
+      ],
+      "Modified Item": [
+        "No"
+      ],
+      "Number of Items": [
+        "1"
+      ],
+      "Type": [
+        "Electric Bike"
+      ]
+    },
+    "warnings": []
+  }
+}

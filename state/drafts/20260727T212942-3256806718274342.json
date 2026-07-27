@@ -1,0 +1,128 @@
+{
+  "created_at": "2026-07-27T16:00:33Z",
+  "draft_id": "20260727T212942-3256806718274342",
+  "ebay_url": "",
+  "listing_id": "",
+  "notes": [],
+  "product_id": "3256806718274342",
+  "publish_allowed": false,
+  "publish_error": "",
+  "published": false,
+  "run_stamp": "20260727T212942",
+  "source": {
+    "aliexpress_orders": 7297.0,
+    "aliexpress_rating": 4.68,
+    "aliexpress_url": "https://www.aliexpress.us/item/3256806718274342.html",
+    "appeal_reason": "top seller in niche (7297 orders)",
+    "appeal_score": 7297.0,
+    "aspects": {
+      "Brand": [
+        "Unbranded"
+      ],
+      "Color": [
+        "Silver Grey"
+      ],
+      "Compatible Brand": [
+        "Tesla"
+      ],
+      "Custom Bundle": [
+        "No"
+      ],
+      "Features": [
+        "UV Block, Dual-Sided, Easy Install"
+      ],
+      "MPN": [
+        "N/A"
+      ],
+      "Material": [
+        "Ice Cloth Mesh Fabric"
+      ],
+      "Model": [
+        "For Tesla Model 3 Y YL"
+      ],
+      "Modified Item": [
+        "No"
+      ],
+      "Number of Items": [
+        "3 Pieces"
+      ],
+      "Type": [
+        "Sun Shade"
+      ]
+    },
+    "assigned_niche": "Automotive Parts & Accessories",
+    "category_query": "Sun Shade For Tesla Model 3 Y YL Juniper Highland 2025-2020 2026 Upgrade Ice",
+    "condition": "NEW",
+    "functional_fingerprint": "sun shade for tesla model 3 y yl juniper highland 2025 2020 2026 upgrade ice cloth buckle sun glass front rear sunroof skylight",
+    "inventory_item_group_key": "",
+    "listing_description": "<p>Advanced sunshade enhances cabin comfort by blocking UV rays and reducing sunroof heat in Tesla Model 3, Y, and YL 2020-2026. Protects from glare and excessive warmth for a cooler ride.</p><p>Designed to solve overheating and UV damage from sunroofs, this shade keeps your vehicle interior comfortable and safeguards upholstery. Easy installation with non-destructive clips and seamless edges ensures a perfect fit.</p><h3>Key Features</h3><ul><li><strong>Dual-Sided Design:</strong> Ice cloth front and mesh rear sunroof sunshades for superior UV blocking and ventilation.</li><li><strong>High-Density Material:</strong> Cool UV block fabric reduces solar heat and glare effectively.</li><li><strong>Soft & Odourless Fabric:</strong> Ensures a fresh, comfortable environment without chemical smells.</li><li><strong>Easy Installation:</strong> Non-destructive installation clips secure shades without damaging headliner or bonnet/hood.</li><li><strong>Compact Storage Bag:</strong> Comes with a practical storage bag for neat, foldable transportation and storage.</li></ul><hr><h3>Specifications</h3><ul><li>Compatibility: Tesla Model 3, Y, YL (2020-2026)</li><li>Shade Dimensions: Approximately 100cm x 70cm / 39in x 27.5in</li><li>Material: Ice crystal cloth, mesh fabric</li><li>Colour: Silver/Grey</li><li>Number of Items: 2 sunroof sunshades + 1 storage bag</li><li>Weight: Approx. 250g / 0.55lbs</li><li>Design: Front and rear sunroof sunshades with seamless stitching</li></ul>",
+    "listing_title": "Tesla Model 3 Y YL Sunroof Sun Shade 2in1 Ice Crystal Cooler 100x70cm 39x27.5in",
+    "local_calendar_date": "2026-07-27",
+    "mode": "ebay_api",
+    "product_id": "3256806718274342",
+    "run_id": "20260727T212942-product-3256806718274342",
+    "selected_variants": [
+      {
+        "delivered_total": "19.31",
+        "expected_ebay_price": "75.00",
+        "id": "default",
+        "options": {},
+        "quantity": 1,
+        "sku": "ALI-3256806718274342-default-37a8eec1",
+        "visible_item_price": "19.31"
+      }
+    ],
+    "source_images": [
+      "https://ae-pic-a1.aliexpress-media.com/kf/S837494a83a2d4dea95b060723bfa2999S.jpg",
+      "https://ae-pic-a1.aliexpress-media.com/kf/S1c09830099654ad297e23cd920c9c68bh.jpg",
+      "https://ae-pic-a1.aliexpress-media.com/kf/Sf9ecde753e4f46de972be9c75303e871o.jpg",
+      "https://ae-pic-a1.aliexpress-media.com/kf/S0cae80acc92040bd983bed2ae7daa93eS.jpg",
+      "https://ae-pic-a1.aliexpress-media.com/kf/S2c5beeacf35644f887914780fac71d0aj.jpg",
+      "https://ae-pic-a1.aliexpress-media.com/kf/Sd50ea38a3f1f41758c7a54c7e0c87a51d.jpg"
+    ],
+    "source_title": "Sun Shade For Tesla Model 3 Y YL Juniper Highland 2025-2020 2026 Upgrade Ice Cloth Buckle Sun Glass Front Rear Sunroof Skylight",
+    "verified_brand": "Unbranded"
+  },
+  "spare_images": [],
+  "status": "draft",
+  "updated_at": "2026-07-27T16:00:33Z",
+  "validation": {
+    "category_id": "20585",
+    "normalized_aspects": {
+      "Brand": [
+        "Unbranded"
+      ],
+      "Color": [
+        "Silver Grey"
+      ],
+      "Compatible Brand": [
+        "Tesla"
+      ],
+      "Custom Bundle": [
+        "No"
+      ],
+      "Features": [
+        "UV Block, Dual-Sided, Easy Install"
+      ],
+      "MPN": [
+        "N/A"
+      ],
+      "Material": [
+        "Ice Cloth Mesh Fabric"
+      ],
+      "Model": [
+        "For Tesla Model 3 Y YL"
+      ],
+      "Modified Item": [
+        "No"
+      ],
+      "Number of Items": [
+        "3 Pieces"
+      ],
+      "Type": [
+        "Sun Shade"
+      ]
+    },
+    "warnings": []
+  }
+}
