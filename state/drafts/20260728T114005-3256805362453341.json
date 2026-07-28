@@ -1,0 +1,128 @@
+{
+  "created_at": "2026-07-28T06:11:47Z",
+  "draft_id": "20260728T114005-3256805362453341",
+  "ebay_url": "",
+  "listing_id": "",
+  "notes": [],
+  "product_id": "3256805362453341",
+  "publish_allowed": false,
+  "publish_error": "",
+  "published": false,
+  "run_stamp": "20260728T114005",
+  "source": {
+    "aliexpress_orders": 2533.0,
+    "aliexpress_rating": 4.8,
+    "aliexpress_url": "https://www.aliexpress.us/item/3256805362453341.html",
+    "appeal_reason": "top seller in niche (2533 orders)",
+    "appeal_score": 2533.0,
+    "aspects": {
+      "Brand": [
+        "Unbranded"
+      ],
+      "Color": [
+        "Silver"
+      ],
+      "Compatible Brand": [
+        "Universal"
+      ],
+      "Custom Bundle": [
+        "No"
+      ],
+      "Features": [
+        "Wireless, Adjustable Speed, LED Display"
+      ],
+      "MPN": [
+        "N/A"
+      ],
+      "Material": [
+        "ABS Plastic"
+      ],
+      "Model": [
+        "Ultima M8S"
+      ],
+      "Modified Item": [
+        "No"
+      ],
+      "Number of Items": [
+        "23"
+      ],
+      "Type": [
+        "Microneedling Pen"
+      ]
+    },
+    "assigned_niche": "Beauty & Self Care",
+    "category_query": "Authentic Dr pen Ultima M8S With 22 pcs Needle Pin Microneedling Pen Wireless",
+    "condition": "NEW",
+    "functional_fingerprint": "authentic dr pen ultima m8s with 22 pcs needle pin microneedling pen wireless derma pen beauty machine needle length 0 25 mm",
+    "inventory_item_group_key": "",
+    "listing_description": "<p>Achieve professional skin rejuvenation with the Dr Pen Ultima M8S Wireless Microneedling Pen, featuring a 0.25mm needle length and 22 replacement needle cartridges for varied skin treatments.</p><p>Designed to promote collagen production and improve skin texture, this wireless device offers six adjustable speeds and a bright LED digital display for precise control. Ideal for reducing fine lines, acne scars, and stretch marks while enhancing overall skin tone.</p><h3>Key Features</h3><ul><li><strong>Wireless Design:</strong> Portable and easy to use without cords for convenient treatments.</li><li><strong>Adjustable Speeds:</strong> Six-speed settings allow customization for different skin types and treatment areas.</li><li><strong>22 Needle Cartridges:</strong> Includes 22 high-quality needles with a precise 0.25mm length for safe and effective microneedling.</li><li><strong>Secure 3-Lock Connector:</strong> Ensures the needle cartridge locks firmly for stability during use.</li><li><strong>Durable Build:</strong> Made with a sturdy silver ABS plastic body for long-lasting performance.</li></ul><hr><h3>Specifications</h3><ul><li>Needle Length: 0.25mm / 0.01in</li><li>Number of Needle Cartridges: 22 pcs</li><li>Speed Settings: 1–6 adjustable levels</li><li>Body Material: ABS Plastic, Silver colour</li><li>Dimensions (Pen): Approx. 15cm / 5.9in length</li><li>Weight (Pen): Approx. 85g / 3oz</li></ul><hr><h3>Package Includes</h3><ul><li>1 × Dr Pen Ultima M8S Wireless Microneedling Pen</li><li>22 × Microneedling Needle Cartridges (0.25mm)</li><li>1 × Protective Storage Case</li></ul>",
+    "listing_title": "Dr Pen Ultima M8S Wireless Microneedling Derma Pen 0.25mm Needle 22pcs Kit",
+    "local_calendar_date": "2026-07-28",
+    "mode": "ebay_api",
+    "product_id": "3256805362453341",
+    "run_id": "20260728T114005-product-3256805362453341",
+    "selected_variants": [
+      {
+        "delivered_total": "60.47",
+        "expected_ebay_price": "229.00",
+        "id": "default",
+        "options": {},
+        "quantity": 1,
+        "sku": "ALI-3256805362453341-default-37a8eec1",
+        "visible_item_price": "60.47"
+      }
+    ],
+    "source_images": [
+      "https://ae-pic-a1.aliexpress-media.com/kf/Sf49d317f679543698736b19cb9a6fdcdG.jpg",
+      "https://ae-pic-a1.aliexpress-media.com/kf/Ab78f4dca79d4428ea609a2b2eaca6817C.jpg",
+      "https://ae-pic-a1.aliexpress-media.com/kf/A67a2ec54e075419c9cc171dad76dd1323.jpg",
+      "https://ae-pic-a1.aliexpress-media.com/kf/Aec35193efcfe434c836b3322064bf1eat.jpg",
+      "https://ae-pic-a1.aliexpress-media.com/kf/A84e7650b2ff342f78bc5b6511e3e98dec.jpg",
+      "https://ae-pic-a1.aliexpress-media.com/kf/Aad5313199b304cb2a27d13e97be48f46k.jpg"
+    ],
+    "source_title": "Authentic Dr pen Ultima M8S With 22 pcs Needle Pin Microneedling Pen Wireless Derma Pen Beauty Machine needle length 0.25 mm",
+    "verified_brand": "Unbranded"
+  },
+  "spare_images": [],
+  "status": "draft",
+  "updated_at": "2026-07-28T06:11:47Z",
+  "validation": {
+    "category_id": "33164",
+    "normalized_aspects": {
+      "Brand": [
+        "Unbranded"
+      ],
+      "Color": [
+        "Silver"
+      ],
+      "Compatible Brand": [
+        "Universal"
+      ],
+      "Custom Bundle": [
+        "No"
+      ],
+      "Features": [
+        "Wireless, Adjustable Speed, LED Display"
+      ],
+      "MPN": [
+        "N/A"
+      ],
+      "Material": [
+        "ABS Plastic"
+      ],
+      "Model": [
+        "Ultima M8S"
+      ],
+      "Modified Item": [
+        "No"
+      ],
+      "Number of Items": [
+        "23"
+      ],
+      "Type": [
+        "Microneedling Pen"
+      ]
+    },
+    "warnings": []
+  }
+}

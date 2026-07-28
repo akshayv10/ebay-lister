@@ -1,0 +1,77 @@
+{
+  "created_at": "2026-07-28T06:11:12Z",
+  "draft_id": "20260728T114005-2251800707706055",
+  "ebay_url": "",
+  "listing_id": "",
+  "notes": [],
+  "product_id": "2251800707706055",
+  "publish_allowed": false,
+  "publish_error": "",
+  "published": false,
+  "run_stamp": "20260728T114005",
+  "source": {
+    "aliexpress_orders": 2830.0,
+    "aliexpress_rating": 4.88,
+    "aliexpress_url": "https://www.aliexpress.us/item/2251800707706055.html",
+    "appeal_reason": "top seller in niche (2830 orders)",
+    "appeal_score": 2830.0,
+    "aspects": {
+      "Brand": [
+        "Unbranded"
+      ],
+      "MPN": [
+        "N/A"
+      ]
+    },
+    "assigned_niche": "Beauty & Self Care",
+    "category_query": "Titan 3D Scissors Professional Barber Hairdressing Shears Hair Cutting Machine",
+    "condition": "NEW",
+    "functional_fingerprint": "titan 3d scissors professional barber hairdressing shears hair cutting machine barber shop hair scissors",
+    "inventory_item_group_key": "",
+    "listing_description": "Titan 3D Scissors Professional Barber Hairdressing Shears Hair Cutting Machine. Brand new, unused item in original packaging. Please review the photos and item specifics before purchase.",
+    "listing_title": "Titan 3D Scissors Professional Barber Hairdressing Shears Hair Cutting Machine",
+    "local_calendar_date": "2026-07-28",
+    "mode": "ebay_api",
+    "product_id": "2251800707706055",
+    "run_id": "20260728T114005-product-2251800707706055",
+    "selected_variants": [
+      {
+        "delivered_total": "24.86",
+        "expected_ebay_price": "95.00",
+        "id": "default",
+        "options": {},
+        "quantity": 1,
+        "sku": "ALI-2251800707706055-default-37a8eec1",
+        "visible_item_price": "24.86"
+      }
+    ],
+    "source_images": [
+      "https://ae-pic-a1.aliexpress-media.com/kf/HTB1jm0dbx_rK1RkHFqDq6yJAFXak.jpg",
+      "https://ae-pic-a1.aliexpress-media.com/kf/HTB1TClgbEzrK1RjSspmq6AOdFXaF.jpg",
+      "https://ae-pic-a1.aliexpress-media.com/kf/H94ed75e7961c494189635af3e4881151L.jpg",
+      "https://ae-pic-a1.aliexpress-media.com/kf/Sc40e313ac27247eb90c7f96891c80d2bo.jpg",
+      "https://ae-pic-a1.aliexpress-media.com/kf/S764af32abe424e419c07b7bb13d2ff573.jpg",
+      "https://ae-pic-a1.aliexpress-media.com/kf/S13e5442a7a3740ada1f924e77bd53c418.jpg"
+    ],
+    "source_title": "Titan 3D Scissors Professional Barber Hairdressing Shears Hair Cutting Machine Barber Shop Hair Scissors",
+    "verified_brand": "Unbranded"
+  },
+  "spare_images": [],
+  "status": "draft",
+  "updated_at": "2026-07-28T06:11:12Z",
+  "validation": {
+    "category_id": "101915",
+    "normalized_aspects": {
+      "Brand": [
+        "Unbranded"
+      ],
+      "MPN": [
+        "N/A"
+      ],
+      "Type": [
+        "Barber Shear"
+      ]
+    },
+    "warnings": []
+  }
+}
