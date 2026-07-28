@@ -45,7 +45,7 @@ import ali_api
 import draft_sheet
 import draft_store
 import notify
-from ebay_common import EbayError, write_json
+from ebay_common import ApiError, EbayError, UnknownOutcome, write_json
 from listing_job import normalize_source
 
 RUN_TZ = os.environ.get("RUN_TZ", "Asia/Kolkata")
@@ -166,6 +166,34 @@ def cost_check(source: dict[str, Any]) -> tuple[bool, str, dict[str, Any]]:
     return True, message, source
 
 
+# eBay statuses that mean "try again later", not "this product is unacceptable".
+_RETRYABLE_STATUSES = {
+    401,  # token expired or auth outage — our credentials, not the listing
+    403,  # permission problem — likewise
+    408,  # request timeout
+    429,  # rate limited
+}
+
+
+def is_permanent_rejection(exc: Exception) -> bool:
+    """True only when eBay has refused this particular listing on its merits.
+
+    Only such a refusal should consume a parking attempt. A timeout, a 5xx, a rate
+    limit, an auth outage or a local OSError says nothing about the product — counting
+    those would let a brief eBay outage across two runs park an entire batch and
+    exclude it from every later publish, including --all.
+    """
+    if isinstance(exc, UnknownOutcome):
+        # The mutation may have reached eBay; the outcome is unknown, so it is neither a
+        # confirmed rejection nor safe to treat as one.
+        return False
+    if isinstance(exc, ApiError):
+        return 400 <= int(getattr(exc, "status", 0)) < 500 and exc.status not in _RETRYABLE_STATUSES
+    # Anything else — plain EbayError from our own checks, OSError, ValueError — is not a
+    # confirmed product rejection. Default to retryable.
+    return False
+
+
 def prepare_for_publish(draft: dict[str, Any]) -> tuple[bool, dict[str, Any], str]:
     """Resolve a draft into the exact source that would be listed.
 
@@ -223,18 +251,26 @@ def publish_one(
         # AI here would rewrite copy that is about to go live.
         product = list_one(client, config, source_path, enrich=False)
     except (EbayError, OSError, ValueError) as exc:
-        parked = attempt >= draft_store.MAX_PUBLISH_ATTEMPTS
-        note = f"attempt {attempt} of {draft_store.MAX_PUBLISH_ATTEMPTS}"
+        # Only a refusal of this listing on its merits burns an attempt. A timeout, 5xx,
+        # rate limit or auth outage leaves the count alone so the draft stays retryable.
+        permanent = is_permanent_rejection(exc)
+        counted = attempt if permanent else draft_store.attempts(draft)
+        parked = permanent and counted >= draft_store.MAX_PUBLISH_ATTEMPTS
+        note = (
+            f"attempt {counted} of {draft_store.MAX_PUBLISH_ATTEMPTS}"
+            f"{' — parked' if parked else ''}"
+            if permanent else "transient failure, not counted"
+        )
         draft_store.mark(
             draft,
             draft_store.STATUS_PUBLISH_FAILED,
-            publish_error=f"[{note}{' — parked' if parked else ''}] {exc}",
+            publish_error=f"[{note}] {exc}",
             source=merged,
-            publish_attempts=attempt,
+            publish_attempts=counted,
         )
         outcome.update({
             "status": "publish_failed", "error": str(exc),
-            "attempt": attempt, "parked": parked,
+            "attempt": counted, "parked": parked, "permanent": permanent,
         })
         return outcome
 

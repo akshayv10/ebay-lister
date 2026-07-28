@@ -373,7 +373,7 @@ def test_daily_workflow_defaults_to_draft_and_can_revert_to_auto() -> None:
 class _StubListOne:
     """Captures what publish_one hands to ebay_listing.list_one."""
 
-    def __init__(self, fail: str = ""):
+    def __init__(self, fail: str | Exception = ""):
         self.fail = fail
         self.seen: dict[str, Any] = {}
 
@@ -382,7 +382,9 @@ class _StubListOne:
 
         self.seen = {"source": read_json(source_path), "enrich": enrich}
         if self.fail:
-            raise EbayError(self.fail)
+            # Raise a supplied exception as-is: the parking rules turn on its type and
+            # HTTP status, so wrapping it in a plain EbayError would hide what is tested.
+            raise self.fail if isinstance(self.fail, Exception) else EbayError(self.fail)
         product = dict(self.seen["source"])
         product.update({
             "status": "live", "published": True,
@@ -416,13 +418,15 @@ def test_a_failed_publish_leaves_the_draft_retryable() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         directory = Path(tmp)
         draft = sample_draft(directory)
-        stub = _StubListOne(fail="eBay rejected the category")
+        from ebay_common import ApiError
+
+        stub = _StubListOne(fail=ApiError("POST", "https://x", 400, {"message": "bad category"}))
         outcome = _publish(draft, stub, directory)
 
         assert outcome["status"] == "publish_failed"
         stored = draft_store.load(draft["draft_id"], directory)
         assert stored["published"] is False
-        assert "eBay rejected the category" in stored["publish_error"]
+        assert "HTTP 400" in stored["publish_error"]
         assert "attempt 1 of 2" in stored["publish_error"]
         assert draft_store.is_publishable(stored), "a failed draft must be fixable and re-approved"
 
@@ -720,19 +724,94 @@ def test_a_parked_draft_can_still_be_forced_by_id() -> None:
 
 
 def test_a_failed_publish_increments_the_attempt_count() -> None:
+    """Only a refusal of the listing itself counts — hence the 400, not a bare error."""
+    from ebay_common import ApiError
+
     with tempfile.TemporaryDirectory() as tmp:
         directory = Path(tmp)
         draft = sample_draft(directory)
-        _publish(draft, _StubListOne(fail="eBay refused"), directory)
+        refusal = ApiError("POST", "https://x", 400, {})
+        _publish(draft, _StubListOne(fail=refusal), directory)
         first = draft_store.load(draft["draft_id"], directory)
         assert draft_store.attempts(first) == 1
         assert not draft_store.is_parked(first)
 
-        _publish(first, _StubListOne(fail="eBay refused"), directory)
+        _publish(first, _StubListOne(fail=refusal), directory)
         second = draft_store.load(draft["draft_id"], directory)
         assert draft_store.attempts(second) == 2
         assert draft_store.is_parked(second), "the second refusal parks it"
         assert "parked" in second["publish_error"]
+
+
+def test_only_a_real_ebay_rejection_consumes_an_attempt() -> None:
+    """A brief eBay outage across two runs must not park a whole batch permanently."""
+    from ebay_common import ApiError, EbayError, UnknownOutcome
+
+    parks = [
+        ApiError("POST", "https://x", 400, {}),   # the Dr Pen policy refusal
+        ApiError("POST", "https://x", 404, {}),
+        ApiError("POST", "https://x", 422, {}),
+    ]
+    retryable = [
+        ApiError("POST", "https://x", 401, {}),   # auth outage — our credentials
+        ApiError("POST", "https://x", 403, {}),
+        ApiError("POST", "https://x", 408, {}),   # timeout
+        ApiError("POST", "https://x", 429, {}),   # rate limited
+        ApiError("POST", "https://x", 500, {}),   # eBay outage
+        ApiError("POST", "https://x", 503, {}),
+        UnknownOutcome("network timeout on a mutating call"),
+        EbayError("live listing readback did not match"),
+        OSError("disk full"),
+    ]
+    for exc in parks:
+        assert publish_drafts.is_permanent_rejection(exc), f"{exc!r} should consume an attempt"
+    for exc in retryable:
+        assert not publish_drafts.is_permanent_rejection(exc), f"{exc!r} must stay retryable"
+
+
+def test_a_transient_failure_leaves_the_attempt_count_alone() -> None:
+    from ebay_common import ApiError
+
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp)
+        draft = sample_draft(directory)
+        # Two eBay outages in a row must not park it.
+        for _ in range(2):
+            _publish(draft, _StubListOne(fail=ApiError("POST", "https://x", 503, {})), directory)
+        stored = draft_store.load(draft["draft_id"], directory)
+        assert draft_store.attempts(stored) == 0
+        assert not draft_store.is_parked(stored)
+        assert draft_store.auto_selectable(stored), "an outage must not exclude the draft"
+        assert "not counted" in stored["publish_error"]
+
+
+def test_a_permanent_rejection_still_parks_after_two() -> None:
+    from ebay_common import ApiError
+
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp)
+        draft = sample_draft(directory)
+        rejection = ApiError("POST", "https://x", 400, {})
+        _publish(draft, _StubListOne(fail=rejection), directory)
+        assert draft_store.attempts(draft_store.load(draft["draft_id"], directory)) == 1
+        _publish(draft_store.load(draft["draft_id"], directory),
+                 _StubListOne(fail=rejection), directory)
+        stored = draft_store.load(draft["draft_id"], directory)
+        assert draft_store.attempts(stored) == 2
+        assert draft_store.is_parked(stored)
+
+
+def test_an_outage_between_rejections_does_not_reset_the_count() -> None:
+    from ebay_common import ApiError
+
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp)
+        draft = sample_draft(directory)
+        _publish(draft, _StubListOne(fail=ApiError("POST", "https://x", 400, {})), directory)
+        _publish(draft_store.load(draft["draft_id"], directory),
+                 _StubListOne(fail=ApiError("POST", "https://x", 503, {})), directory)
+        stored = draft_store.load(draft["draft_id"], directory)
+        assert draft_store.attempts(stored) == 1, "the outage must neither add nor clear"
 
 
 def test_a_cost_block_does_not_count_as_an_attempt() -> None:
