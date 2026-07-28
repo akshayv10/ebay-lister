@@ -2,7 +2,8 @@ name: Daily eBay auto-lister
 
 # AUTOMATION IS LIVE — runs daily at 09:00 IST (03:30 UTC).
 #
-# DRAFT-FIRST IS THE DEFAULT. A scheduled run sources two products, enriches and
+# DRAFT-FIRST IS THE DEFAULT. A scheduled run sources two products (repository variable
+# PRODUCTS_PER_RUN changes that — set it to 1 for a single product a day), enriches and
 # validates them, and saves them as DRAFTS for review — it creates nothing on eBay.
 # You review them in the workbook's "Drafts" tab, tick Publish? = YES on the ones you
 # want, and run the "Publish approved eBay drafts" workflow.
@@ -28,6 +29,13 @@ on:
           - sheet-sync-only
           - email-test
         default: draft
+      products:
+        description: "How many products to source this run"
+        type: choice
+        options:
+          - "2"
+          - "1"
+        default: "2"
 
 permissions:
   contents: write   # allows committing updated history back to the repo
@@ -50,6 +58,9 @@ jobs:
       RUNS_DIR: ebay-listing-runs
       DRAFT_DIR: state/drafts
       RUN_TZ: ${{ vars.RUN_TZ || 'Asia/Kolkata' }}
+      # How many products a run produces. Manual dispatch wins; a scheduled run uses the
+      # repository variable PRODUCTS_PER_RUN; absent both, two products as before.
+      PRODUCTS_PER_RUN: ${{ inputs.products || vars.PRODUCTS_PER_RUN || '2' }}
       ALI_DEBUG: ${{ vars.ALI_DEBUG || '0' }}
       SHEETS_SPREADSHEET_ID: 10GgtsN_cxhHBvbEYa4vUXBUbC-LqeElkzmRiL3TT0Uk
       SHEETS_TAB_NAME: Auto Lister
@@ -100,6 +111,7 @@ jobs:
           LIVE: ${{ (inputs.mode == 'full' || (github.event_name == 'schedule' && vars.LISTING_MODE == 'auto')) && 'yes' || 'no' }}
           DRAFT: ${{ (inputs.mode == 'draft' || (github.event_name == 'schedule' && vars.LISTING_MODE != 'auto')) && 'yes' || 'no' }}
         run: |
+          echo "Targeting $PRODUCTS_PER_RUN product(s) this run."
           if [ "$LIVE" = "yes" ]; then
             echo "::warning::LIVE MODE — this run will publish real eBay listings."
             python find-and-prepare-ebay-listings/scripts/daily_run.py --live

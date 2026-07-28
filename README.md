@@ -1,6 +1,7 @@
 # Daily AliExpress → eBay draft-and-publish lister
 
-Sources **2 AliExpress products/day** via the official AliExpress API, prepares a
+Sources **2 AliExpress products/day** (configurable — see
+[How many products per run](#how-many-products-per-run)) via the official AliExpress API, prepares a
 complete eBay listing for each, and **emails you a draft to review**. You check it,
 change anything you want, tick a box, and then it goes live. Runs unattended in
 GitHub Actions (your computer can be off). Successful live listings are upserted into
@@ -146,6 +147,20 @@ ALIEXPRESS_ACCESS_TOKEN='…' python3 mint_ali_token.py --check   # does an exis
 `--check` distinguishes "the token expired" from "the app was never granted the
 Dropshipping permission" — two problems that look identical from the sheet.
 
+## How many products per run
+
+Two per run is the default, everywhere. To source only one:
+
+- **For one run:** **Actions → Daily eBay auto-lister → Run workflow → products: `1`**.
+- **For the schedule:** set the repository variable `PRODUCTS_PER_RUN` to `1`. Delete it
+  (or set it to `2`) to go back to two a day.
+- **Locally:** `python3 daily_run.py --draft --count 1`.
+
+The setting applies to whichever mode the run is in — draft, live, or dry run — and the
+notification reports "1 of 1" rather than "1 of 2". Sourcing still over-samples
+candidates and keeps the best ones, so asking for one product does not weaken the
+quality gates. A missing or unparseable value falls back to 2.
+
 ## Going back to automatic
 
 The original publish-immediately pathway is untouched and still available:
@@ -225,7 +240,8 @@ Push this repo (private), then add **Settings → Secrets and variables → Acti
 
 Optional **Variables**: `RUN_TZ` (default `Asia/Kolkata`), `SMTP_HOST`, `SMTP_PORT`,
 `OPENAI_MODEL` (default `gpt-4.1-mini`), `LISTING_MODE` (`draft` by default; `auto`
-publishes on the schedule without review), `SHEETS_DRAFT_TAB_NAME` (default `Drafts`),
+publishes on the schedule without review), `PRODUCTS_PER_RUN` (default `2`; set to `1`
+for a single product per run), `SHEETS_DRAFT_TAB_NAME` (default `Drafts`),
 `DRAFT_MAX_COST_DRIFT_PCT` (default `10`). Without `OPENAI_API_KEY` the listings still
 publish, using a plain template description instead of AI copy.
 
