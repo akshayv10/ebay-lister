@@ -29,6 +29,11 @@ There are two steps, and you are the gate between them.
    volume, functionally distinct).
 3. Enriches each one — real AliExpress variations plus the AI-written title,
    description, and item specifics — so the draft you review is the finished listing.
+   **The AI title never carries a brand name**: the prompt forbids it, the model reports
+   any brand it saw, and `openai_copy.strip_brands` removes that brand (plus anything on
+   the sourcing blocklist) from the title before it is saved. Every listing goes out
+   `Brand: Unbranded`, so a brand in the title would contradict its own item specifics —
+   which is what got the Dr Pen draft rejected under eBay policy.
 4. Validates each against eBay **read-only**: resolves the category and required item
    specifics through the Taxonomy API. **Nothing is created on eBay.** No images are
    uploaded, no inventory item or offer is written.
