@@ -92,17 +92,59 @@ Everything else (`Status`, `Thumbnail`, `Delivered Cost`, `Suggested Price`, `Wa
 on every sync. Clearing an editable cell falls back to the drafted value rather than
 wiping the field.
 
-### Adding photos the AliExpress API can't reach
+### Filling the gallery: `collect_images.py`
 
-`ds.product.get` returns the main gallery and, with a seller token, per-SKU thumbnails —
-but not the lifestyle and description shots. So each draft also scrapes the public
-AliExpress product page and puts everything it found that the listing **isn't** using
-into a read-only **Spare Images** column. Adding one is a copy from that cell into
-`Images`.
+The daily run can only put a few feed thumbnails in the sheet. Everything richer —
+the full gallery, per-variant photos, the description-section shots — needs either a
+seller token (which `ds.product.get` requires) or the product page itself. **AliExpress
+bot-challenges datacenter IPs, so GitHub Actions gets neither.** Your own connection
+does, which is why this step runs on your Mac:
 
-Anything else you paste into `Images` works too, as long as it's a public HTTPS URL —
+```bash
+cd find-and-prepare-ebay-listings/scripts
+python3 collect_images.py                # fill every pending draft's Images cell
+python3 collect_images.py --print-only    # show what it would write, change nothing
+python3 collect_images.py --browser       # render with headless Chromium if blocked
+python3 collect_images.py --url https://www.aliexpress.us/item/<id>.html   # inspect one
+```
+
+It reads the pending rows from the Drafts tab, fetches each product page, pulls the
+gallery and per-SKU images out of the page's own data, follows the description link for
+the lifestyle shots, and writes the result back into **Images** — ordered gallery, then
+variant, then description, capped at eBay's limit (24, or 12 for multi-variant). Overflow
+goes to **Spare Images**. It only ever writes those columns, so a title or price you
+edited in the meantime is safe, and a page it can't read leaves the row untouched rather
+than clearing it.
+
+Needs `GOOGLE_SERVICE_ACCOUNT_JSON` locally (the same key as the workflows), and no eBay
+or OpenAI credentials at all. If the plain fetch comes back empty, the page was
+challenged — retry with `--browser` after
+`pip install playwright && playwright install chromium`.
+
+> **Check the description-section images before publishing.** They are often banners,
+> size charts or watermarked collages, and eBay can pull a listing over them. They are
+> always ordered last so they never become your primary photo, and the count is reported
+> in the **Warnings** column. `--no-description-images` skips them entirely.
+
+Anything you paste into `Images` by hand works too, as long as it's a public HTTPS URL —
 that's an eBay requirement, not ours: eBay's importer fetches the image from the URL you
 give it, so a local file or a Google Drive share link won't work.
+
+### The seller token is worth another try
+
+Most of the above exists to work around a missing `ALIEXPRESS_ACCESS_TOKEN`. Without it
+you also lose multi-variant listings, per-SKU shipping costs, and the review-count gate.
+The minter now reports AliExpress's actual error instead of a bare `HTTP 400`:
+
+```bash
+python3 mint_ali_token.py --debug          # prints the signing base string and real error
+python3 mint_ali_token.py --auth-host oauth   # the other regional consent host
+python3 mint_ali_token.py --both-redirects    # if redirect_uri alone is rejected
+ALIEXPRESS_ACCESS_TOKEN='…' python3 mint_ali_token.py --check   # does an existing token work?
+```
+
+`--check` distinguishes "the token expired" from "the app was never granted the
+Dropshipping permission" — two problems that look identical from the sheet.
 
 ## Going back to automatic
 
@@ -312,6 +354,7 @@ python3 test_list_from_url.py      # on-demand single-URL lister (URL parse, gat
 python3 test_skill.py              # eBay-side regression (never hits Production)
 python3 test_drafts.py             # draft flow: edits, price override, stale-cost guard
 python3 test_safety.py             # dry-run-by-default and draft-by-default posture
+python3 test_collect_images.py     # image collection: classification, ordering, caps
 ALI_API_FIXTURE="$PWD/fixtures/ali_sample.json" \
   HISTORY_PATH=/tmp/h.jsonl RUNS_DIR=/tmp/runs \
   python3 daily_run.py --dry-run   # full pipeline, writes source.json, prints nothing to eBay
