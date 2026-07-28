@@ -87,11 +87,14 @@ def test_notify_counts_expected_from_result() -> None:
     listed = {"status": "listed", "date": "2026-01-01", "niche": "on-demand",
               "listed_count": 1, "expected_count": 1,
               "products": [{"title": "x", "ebay_url": "https://ebay.com/itm/1"}]}
-    subject, text, _ = notify.compose(listed)
+    subject, text, html_body = notify.compose(listed)
     assert "1 of 1 listed" in subject and "1 of 1 listed" in text
+    # Most mail clients render the HTML part, so it must agree with the other two.
+    assert "1 of 1 listed" in html_body and "of 2 listed" not in html_body
     # Daily result (no expected_count) still says "of 2".
     daily = dict(listed); daily.pop("expected_count")
-    assert "1 of 2 listed" in notify.compose(daily)[0]
+    subject, _, html_body = notify.compose(daily)
+    assert "1 of 2 listed" in subject and "1 of 2 listed" in html_body
 
 
 def test_dry_run_result_shape() -> None:

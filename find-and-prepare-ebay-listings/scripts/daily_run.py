@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
-"""Unattended daily entry point: pick the niche, source two AliExpress products
+"""Unattended daily entry point: pick the niche, source AliExpress products
 via the API, then either draft them for review or list them live on eBay, and email
 the result.
+
+Two products per run is the default. Ask for one with --count 1 (or the
+PRODUCTS_PER_RUN environment variable / repository variable).
 
 Run:
     python daily_run.py            # dry run (sources + validates; no eBay, no email)
     python daily_run.py --draft    # source, enrich, validate, save drafts for review
     python daily_run.py --live     # source and publish live immediately (automatic mode)
+    python daily_run.py --draft --count 1   # same, but only one product this run
 
 ``--draft`` is the reviewed pathway: it produces drafts you edit in the Drafts sheet tab
 and approve with the "Publish drafts" workflow. ``--live`` is the original automatic
@@ -14,7 +18,8 @@ pathway, kept intact so the schedule can be switched back to hands-off listing a
 time (repository variable LISTING_MODE=auto).
 
 Environment (see .github/workflows/daily.yml and README):
-    RUN_TZ (default Asia/Kolkata), HISTORY_PATH (default state/resale-product-history.jsonl),
+    RUN_TZ (default Asia/Kolkata), PRODUCTS_PER_RUN (default 2),
+    HISTORY_PATH (default state/resale-product-history.jsonl),
     RUNS_DIR (default ebay-listing-runs), DRAFT_DIR (default state/drafts),
     EBAY_ACCOUNT_CONFIG, eBay + AliExpress + email + Google Sheets secrets.
 """
@@ -41,10 +46,25 @@ HISTORY_PATH = Path(os.environ.get("HISTORY_PATH", "state/resale-product-history
 RUNS_DIR = Path(os.environ.get("RUNS_DIR", "ebay-listing-runs"))
 PREVIEW_PATH = Path(os.environ.get("DRAFT_PREVIEW_PATH", "ebay-listing-runs/drafts-preview.html"))
 SHEET_URL = os.environ.get("SHEETS_SPREADSHEET_URL", "")
+DEFAULT_PRODUCT_COUNT = 2
 
 
 def _now():
     return datetime.now(ZoneInfo(RUN_TZ))
+
+
+def product_count(requested: int | None = None) -> int:
+    """How many products this run should end up with: the --count flag if given,
+    else PRODUCTS_PER_RUN, else 2. A junk or out-of-range value falls back to the
+    default rather than failing the run — an unattended run listing two products is
+    always safer than one that lists none."""
+    if requested is None:
+        raw = os.environ.get("PRODUCTS_PER_RUN", "").strip()
+        try:
+            requested = int(raw) if raw else DEFAULT_PRODUCT_COUNT
+        except ValueError:
+            return DEFAULT_PRODUCT_COUNT
+    return requested if 1 <= requested <= 10 else DEFAULT_PRODUCT_COUNT
 
 
 def write_sources(run_dir: Path, sources: list[dict[str, Any]]) -> list[Path]:
@@ -188,15 +208,18 @@ def build_drafts(run_dir: Path, source_paths: list[Path], run_stamp: str) -> dic
     }
 
 
-def run(mode: str) -> dict[str, Any]:
+def run(mode: str, count: int | None = None) -> dict[str, Any]:
     dry_run = mode != "live"
+    wanted = product_count(count)
     now = _now()
     local_date = now.date().isoformat()
     run_stamp = now.strftime("%Y%m%dT%H%M%S")
     history = load_history(HISTORY_PATH)
     niche_order = niche_priority(history, now.date())
     run_dir = RUNS_DIR / run_stamp
-    pool = int(os.environ.get("ALI_SOURCE_POOL", "6"))
+    # Over-source: candidates fail enrichment or eBay validation, so the pool has to
+    # stay comfortably larger than what we intend to keep.
+    pool = max(int(os.environ.get("ALI_SOURCE_POOL", "6")), wanted * 3)
 
     # Products already sitting in review are not in the listing history, so sourcing
     # would re-pick them tomorrow and we would end up with two publishable drafts — and
@@ -208,7 +231,8 @@ def run(mode: str) -> dict[str, Any]:
 
     result: dict[str, Any] = {
         "date": local_date, "niche": niche_order[0], "run_stamp": run_stamp,
-        "status": "error", "products": [], "listed_count": 0, "notes": [],
+        "status": "error", "products": [], "listed_count": 0,
+        "expected_count": wanted, "notes": [],
     }
 
     # Niche assignment is a preference, not a hard daily lock: over-source a small pool
@@ -239,7 +263,7 @@ def run(mode: str) -> dict[str, Any]:
     result["run_dir"] = str(run_dir)
 
     if mode == "draft":
-        drafted = build_drafts(run_dir, source_paths[:2], run_stamp)
+        drafted = build_drafts(run_dir, source_paths[:wanted], run_stamp)
         result.update({
             key: drafted[key] for key in
             ("drafts", "draft_count", "draft_sheet", "preview_html", "preview_path")
@@ -270,7 +294,7 @@ def run(mode: str) -> dict[str, Any]:
     if dry_run:
         result["status"] = "partial"
         result["error"] = f"DRY RUN — {len(sources)} candidate(s) sourced and validated; eBay listing skipped."
-        result["products"] = product_summaries(sources[:2])
+        result["products"] = product_summaries(sources[:wanted])
         for summary in result["products"]:
             summary["reason"] = "dry run"
         return result
@@ -282,7 +306,7 @@ def run(mode: str) -> dict[str, Any]:
 
     client = EbayClient()
     try:
-        run_result = list_resilient(run_dir, client, needed=2, history_path=HISTORY_PATH)
+        run_result = list_resilient(run_dir, client, needed=wanted, history_path=HISTORY_PATH)
     except (EbayError, OSError, ValueError) as exc:
         result["status"] = "error"
         result["error"] = str(exc)
@@ -303,14 +327,17 @@ def run(mode: str) -> dict[str, Any]:
             "queued": len(listed),
             "error": f"Could not prepare Google Sheets sync: {exc}",
         }
-    if result["listed_count"] >= 2:
+    if result["listed_count"] >= wanted:
         result["status"] = "listed"
-    elif result["listed_count"] == 1:
+    elif result["listed_count"]:
         result["status"] = "partial"
-        result["error"] = "Listed 1 of 2; the other candidate(s) failed — see notes."
+        result["error"] = (
+            f"Listed {result['listed_count']} of {wanted}; "
+            "the other candidate(s) failed — see notes."
+        )
     else:
         result["status"] = "error"
-        result["error"] = "Listed 0 of 2; all candidates failed — see notes."
+        result["error"] = f"Listed 0 of {wanted}; all candidates failed — see notes."
     return result
 
 
@@ -325,6 +352,9 @@ def main() -> int:
                              "instead of publishing. Nothing is created on eBay.")
     parser.add_argument("--dry-run", action="store_true",
                         help="No-op (dry run is the default); kept for backwards compatibility.")
+    parser.add_argument("--count", type=int, default=None, metavar="N",
+                        help="How many products this run should produce (default 2, or "
+                             "PRODUCTS_PER_RUN). Use --count 1 to source a single product.")
     parser.add_argument("--no-email", action="store_true", help="Do not send the email (still runs eBay).")
     args = parser.parse_args()
     dry_run = not args.live
@@ -332,11 +362,14 @@ def main() -> int:
     # into a draft by a stray flag.
     mode = "live" if args.live else ("draft" if args.draft else "dry-run")
 
+    wanted = product_count(args.count)
+
     try:
-        result = run(mode)
+        result = run(mode, wanted)
     except Exception as exc:  # noqa: BLE001 - top-level guard so we always email a failure
         result = {"date": _now().date().isoformat(), "status": "error",
-                  "products": [], "listed_count": 0, "error": f"Unhandled error: {exc}"}
+                  "products": [], "listed_count": 0, "expected_count": wanted,
+                  "error": f"Unhandled error: {exc}"}
 
     # Running OpenAI spend (ledger lives in state/, committed back by the workflow).
     try:
@@ -372,9 +405,9 @@ def main() -> int:
         "live": "LIVE — listings published",
         "draft": f"DRAFT — {result.get('draft_count', 0)} draft(s) saved for review; nothing was listed",
     }.get(mode, "DRY RUN — nothing was listed")
-    print("MODE:", mode_message)
+    print("MODE:", mode_message, f"(target: {wanted} product(s))")
     print(json.dumps({"status": result.get("status"), "listed": result.get("listed_count", 0),
-                      "drafted": result.get("draft_count", 0),
+                      "drafted": result.get("draft_count", 0), "wanted": wanted,
                       "niche": result.get("niche", ""), "error": result.get("error", "")}))
     if mode == "draft":
         return 0 if result.get("status") == "drafted" else 1

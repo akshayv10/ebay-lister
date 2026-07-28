@@ -75,9 +75,46 @@ def test_draft_mode_creates_nothing_on_ebay() -> None:
     """Drafting validates read-only; the offer-creating path must stay behind --live."""
     source = (SCRIPTS / "daily_run.py").read_text(encoding="utf-8")
     build = source.index("def build_drafts(")
-    run_start = source.index("def run(mode: str)")
+    run_start = source.index("def run(mode: str")
     assert "validate_for_draft" in source[build:run_start], "drafting must use read-only validation"
     assert "prepare_product" not in source, "daily_run must never create eBay offers directly"
+
+
+def test_product_count_defaults_to_two() -> None:
+    """Two products per run stays the default; only an explicit 1 changes it."""
+    import os
+
+    import daily_run
+
+    previous = os.environ.pop("PRODUCTS_PER_RUN", None)
+    try:
+        assert daily_run.product_count() == 2, "no configuration means two products"
+        assert daily_run.product_count(1) == 1, "--count 1 must be honoured"
+        os.environ["PRODUCTS_PER_RUN"] = "1"
+        assert daily_run.product_count() == 1, "PRODUCTS_PER_RUN=1 must be honoured"
+        assert daily_run.product_count(2) == 2, "the flag must win over the variable"
+        # Junk or out-of-range configuration falls back rather than failing the run.
+        for junk in ("", "  ", "one", "0", "-3", "99"):
+            os.environ["PRODUCTS_PER_RUN"] = junk
+            assert daily_run.product_count() == 2, f"{junk!r} must fall back to two"
+        assert daily_run.product_count(0) == 2, "0 products would make the run pointless"
+    finally:
+        os.environ.pop("PRODUCTS_PER_RUN", None)
+        if previous is not None:
+            os.environ["PRODUCTS_PER_RUN"] = previous
+
+
+def test_workflow_product_count_defaults_to_two() -> None:
+    """Manual dispatch and the schedule both target two products unless told otherwise."""
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert "products:" in text, "workflow needs a 'products' input"
+    block = text.split("products:", 1)[1][:400]
+    assert 'default: "2"' in block, "the dispatch input must default to 2"
+    assert '"1"' in block, "asking for a single product must be selectable"
+    count_line = next(line for line in text.splitlines() if line.strip().startswith("PRODUCTS_PER_RUN:"))
+    assert "inputs.products" in count_line, "manual dispatch must win"
+    assert "vars.PRODUCTS_PER_RUN" in count_line, "the schedule reads the repository variable"
+    assert "'2'" in count_line, "two products remains the fallback"
 
 
 def test_workflow_has_no_kill_switch() -> None:
