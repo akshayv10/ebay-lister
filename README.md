@@ -1,134 +1,92 @@
 # Daily AliExpress → eBay draft-and-publish lister
 
 Sources **2 AliExpress products/day** via the official AliExpress API, prepares a
-complete eBay listing for each, and **emails you a draft to review**. You check it,
-change anything you want, tick a box, and then it goes live. Runs unattended in
-GitHub Actions (your computer can be off). Successful live listings are upserted into
-the workbook's **Auto Lister** tab. Cost ≈ $0/month.
+complete eBay listing for each, and **waits**. Nothing goes live on a schedule. When
+you're ready — that afternoon, that weekend, whenever — you press one button and the
+day's batch is listed. You then adjust the live listings on eBay however you like.
 
-**Nothing is listed without your approval** — this is the default. If you'd rather go
-back to fully automatic listing, set the repository variable `LISTING_MODE=auto`
-(see [Going back to automatic](#going-back-to-automatic)).
+The point is timing: you are never made to drop what you're doing because a cron fired.
+
+Runs unattended in GitHub Actions (your computer can be off). Live listings are upserted
+into the workbook's **Auto Lister** tab. Cost ≈ $0/month.
+
+If you'd rather go back to fully automatic listing at a fixed time, set the repository
+variable `LISTING_MODE=auto` (see [Going back to automatic](#going-back-to-automatic)).
 
 The pipeline is Python 3.11. Google service-account authentication uses
 `google-auth`; application API calls otherwise use the standard library.
 
 ## How it works
 
-There are two steps, and you are the gate between them.
+Two steps, and the gap between them is yours.
 
-### Step 1 — the daily draft run
+### Step 1 — the daily run prepares drafts
 
-`find-and-prepare-ebay-listings/scripts/daily_run.py --draft` runs on the schedule:
+`daily_run.py --draft` runs on the schedule:
 
 1. Picks the day's niche (5-niche rotation, `daily_history.py`).
-2. Sources 2 qualifying products via `ali_api.py` (rating/orders/price/US gates,
-   brand exclusions, history de-dup). Selection is **AI-free by default**: within the
-   day's rotated niche it picks the two top **bestsellers** (highest AliExpress sales
-   volume, functionally distinct).
-3. Enriches each one — real AliExpress variations plus the AI-written title,
-   description, and item specifics — so the draft you review is the finished listing.
-4. Validates each against eBay **read-only**: resolves the category and required item
-   specifics through the Taxonomy API. **Nothing is created on eBay.** No images are
-   uploaded, no inventory item or offer is written.
-5. Saves each draft to `state/drafts/<draft-id>.json`, writes a row into the workbook's
-   **Drafts** tab, and renders an HTML review page.
-6. Emails you "📝 N drafts ready to review" with that page inline, so you can check the
-   photos, price, and copy from your phone. The same page is uploaded as a workflow
-   artifact.
+2. Sources 2 qualifying products via `ali_api.py` (rating/orders/price/US gates, brand
+   exclusions, history de-dup), picking the day's top **bestsellers**. Products already
+   drafted are excluded, so you never get the same item twice.
+3. Enriches each — real AliExpress variations plus the AI-written title, description and
+   item specifics — so the draft is a finished listing.
+4. Validates against eBay **read-only**: category and required item specifics via the
+   Taxonomy API. **Nothing is created on eBay.** No images uploaded, no offer written.
+5. Saves each draft to `state/drafts/<draft-id>.json`, writes a row to the **Drafts**
+   status board, and emails you — including any older drafts still waiting.
 
-### Step 2 — you review and approve
+### Step 2 — you press the button
 
-Open the **Drafts** tab, change whatever you like, set `Publish?` to `YES` on the rows
-you want, then run **Actions → Publish approved eBay drafts** with mode `publish`.
+**Actions → Publish approved eBay drafts → Run workflow.** That's it; publishing is the
+default, so you don't change any dropdown.
 
-`publish_drafts.py` then, per approved draft:
+It publishes **the most recent day's batch** and reports anything older that's still
+waiting, so one press is a predictable two listings rather than a week's accumulation.
+Per draft it:
 
-1. layers your edits onto the stored draft;
-2. **re-checks the AliExpress cost** — if the item is gone, or delivered cost rose more
-   than `DRAFT_MAX_COST_DRIFT_PCT` (default 10%), it refuses that draft and tells you,
-   rather than listing at a price that no longer earns its margin;
-3. lists it through the same eBay Sell API chain as before (images → eBay Picture
-   Services, category/aspects, qty 1, your fulfillment/payment/return policies, then
-   publish + 10% promotion), **with AI enrichment switched off** so your edits are never
-   overwritten;
-4. records history, upserts the **Auto Lister** row, writes the live eBay link back into
-   the Drafts row, and emails the result.
+1. **re-checks the AliExpress cost** — a draft may have sat for days, so if the item is
+   gone or delivered cost rose past `DRAFT_MAX_COST_DRIFT_PCT` (default 10%), it refuses
+   that one rather than listing at a dead margin;
+2. lists it through the same eBay Sell API chain as always (images → eBay Picture
+   Services, category/aspects, qty 1, your policies, publish + 10% promotion), with AI
+   enrichment **off** so the copy that goes live is the copy that was drafted;
+3. records history, upserts the **Auto Lister** row, updates the status board, and emails.
 
-Drafts are independent: one failing never blocks the others. A draft that fails or gets
-blocked keeps your edits and your tick so you can correct it and re-run; a draft that
-went live can never be published twice. Products already sitting in review are excluded
-from the next day's sourcing, so you never get two drafts for the same item.
+Drafts are independent — one failure never blocks the others.
 
-The `dry-run` mode does the same resolution — your edits, the cost re-check, and full
-validation — and just stops before listing. It reports how many drafts *would* publish
-and why the rest would be refused.
+To clear a backlog in one go, set **scope** to `all`.
 
-> Note: eBay policy compliance is your responsibility. Publishing attaches a
-> mandatory **10% Promoted Listings (General/CPS)** ad to each listing.
+### When eBay refuses a product
 
-> **Why isn't the draft in eBay Seller Hub?** Because eBay has no public API that
-> creates one. Unpublished Inventory API offers are invisible in Seller Hub, Trading
-> `AddItem` publishes immediately, and the Sell Listing API's `createItemDraft` is a
-> limited release for approved partner integrations only. The Drafts tab is the draft.
+Some products eBay simply won't take. A real example from this repo: a *Dr Pen Ultima
+M8S* microneedling pen — a branded medical device listed as `Unbranded` — came back with
+*"the listing or seller may be in violation of eBay policy"*.
 
-## Reviewing a draft
+Such a draft is retried once more, then **parked**: it stops being picked up
+automatically and is reported as needing attention, so it doesn't fail noisily on every
+press. Force it anyway with `--draft-id`, or drop it with
+`python3 draft_store.py reject <draft-id>`.
 
-Each draft is one row in the **Drafts** tab. You own these columns:
+## The Drafts tab is a status board
 
-| Column | What to put in it |
-| --- | --- |
-| `Publish?` | `YES` to approve. Anything else (blank, `NO`) is left alone. Cleared back to `NO` once the listing is live, so an approval is never left standing. |
-| `Title` | eBay title, max 80 characters. |
-| `Description` | Listing description (HTML is fine). |
-| `Category ID` | Pin an exact eBay category instead of the suggested one. |
-| `Item Specifics` | One per line, `Name: value` (`Color: Red, Blue` for multiple values). |
-| `Images` | One image URL per line — this is the listing's gallery, in order. |
-| `Variants` | One per line: `id \| Color=Red, Size=L \| visible_price \| delivered_cost`. |
-| `Price Override USD` | Set the eBay price by hand. Must be above delivered cost. |
+One row per draft: which **Batch** it belongs to, its status, cost, price, warnings, and
+once live its eBay link. **Nothing is read back from it** — publishing selects from the
+draft records under `state/drafts/`, so editing a cell changes nothing and a Sheets
+outage can't stop a publish.
 
-Everything else (`Status`, `Thumbnail`, `Delivered Cost`, `Suggested Price`, `Warnings`,
-`eBay Listing ID`, `eBay URL`, `Publish Error`) is written by the pipeline and refreshed
-on every sync. Clearing an editable cell falls back to the drafted value rather than
-wiping the field.
+Adjust listings on eBay after they go live.
 
-### Filling the gallery: `collect_images.py`
+## A note on `collect_images.py`
 
-The daily run can only put a few feed thumbnails in the sheet. Everything richer —
-the full gallery, per-variant photos, the description-section shots — needs either a
-seller token (which `ds.product.get` requires) or the product page itself. **AliExpress
-bot-challenges datacenter IPs, so GitHub Actions gets neither.** Your own connection
-does, which is why this step runs on your Mac:
+`scripts/collect_images.py` fetches a product's full image set from the AliExpress page
+(the API can't reach it without a seller token, and GitHub Actions is bot-blocked, so it
+runs on your Mac). It writes into the Drafts tab.
 
-```bash
-cd find-and-prepare-ebay-listings/scripts
-python3 collect_images.py                # fill every pending draft's Images cell
-python3 collect_images.py --print-only    # show what it would write, change nothing
-python3 collect_images.py --browser       # render with headless Chromium if blocked
-python3 collect_images.py --url https://www.aliexpress.us/item/<id>.html   # inspect one
-```
-
-It reads the pending rows from the Drafts tab, fetches each product page, pulls the
-gallery and per-SKU images out of the page's own data, follows the description link for
-the lifestyle shots, and writes the result back into **Images** — ordered gallery, then
-variant, then description, capped at eBay's limit (24, or 12 for multi-variant). Overflow
-goes to **Spare Images**. It only ever writes those columns, so a title or price you
-edited in the meantime is safe, and a page it can't read leaves the row untouched rather
-than clearing it.
-
-Needs `GOOGLE_SERVICE_ACCOUNT_JSON` locally (the same key as the workflows), and no eBay
-or OpenAI credentials at all. If the plain fetch comes back empty, the page was
-challenged — retry with `--browser` after
-`pip install playwright && playwright install chromium`.
-
-> **Check the description-section images before publishing.** They are often banners,
-> size charts or watermarked collages, and eBay can pull a listing over them. They are
-> always ordered last so they never become your primary photo, and the count is reported
-> in the **Warnings** column. `--no-description-images` skips them entirely.
-
-Anything you paste into `Images` by hand works too, as long as it's a public HTTPS URL —
-that's an eBay requirement, not ours: eBay's importer fetches the image from the URL you
-give it, so a local file or a Google Drive share link won't work.
+**Under the current flow it does not change what gets published.** Publishing reads the
+draft records under `state/drafts/`, not the sheet, so anything the collector writes to
+the sheet is cosmetic. It's left in place but unwired — add photos on eBay after the
+listing goes live instead. Rewiring it to update the draft records would be a small
+change if you ever want it.
 
 ### The seller token is worth another try
 
@@ -241,10 +199,10 @@ review** — it lists nothing on its own.
 - `sheet-sync-only`: create/repair `Auto Lister`, replay queued rows, and backfill history
 - `email-test`: send a harmless test message without creating a listing
 
-**Actions → Publish approved eBay drafts** is the second step. It defaults to `dry-run`
-(resolve the approved drafts and validate your edits, list nothing); pick `publish` to go
-live. An optional `draft_id` input publishes just one draft — it must still be ticked in
-the sheet.
+**Actions → Publish approved eBay drafts** is the second step, and it defaults to
+`publish` — running it lists the newest batch. Pick `dry-run` to resolve and validate
+without listing. Set **scope** to `all` to clear a backlog, or pass a `draft_id` to
+publish one specific draft (including a parked one).
 
 Notes:
 
@@ -374,8 +332,10 @@ python3 draft_store.py list                 # every draft, newest first
 python3 draft_store.py show <draft-id>      # the full draft record
 python3 draft_store.py reject <draft-id>    # take one out of the running
 python3 draft_sheet.py sync                 # rebuild the Drafts tab from state/drafts/
-python3 draft_sheet.py approved             # which draft IDs are currently ticked
-python3 publish_drafts.py                   # dry run: what would be published
+python3 draft_sheet.py pending              # what is queued, and what is parked
+python3 publish_drafts.py                   # dry run of the newest batch
+python3 publish_drafts.py --live            # publish the newest batch
+python3 publish_drafts.py --live --all      # clear the whole backlog
 ```
 
 ## Tuning (environment variables)

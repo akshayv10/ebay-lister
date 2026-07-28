@@ -167,6 +167,18 @@ def build_drafts(run_dir: Path, source_paths: list[Path], run_stamp: str) -> dic
     if sheet.get("error"):
         notes.append(f"Drafts sheet: {sheet['error']}")
 
+    # Publishing takes the newest batch only, so anything older sits until it is asked
+    # for. Surface it in the email rather than letting it accumulate unseen.
+    older = [
+        {
+            "draft_id": item.get("draft_id", ""),
+            "created_at": item.get("created_at", ""),
+            "title": (item.get("source", {}) or {}).get("listing_title", ""),
+            "parked": draft_store.is_parked(item),
+        }
+        for item in draft_store.backlog(exclude_run_stamp=run_stamp)
+    ]
+
     # The preview is both the emailed body and the uploaded workflow artifact.
     preview_html = ""
     try:
@@ -184,6 +196,7 @@ def build_drafts(run_dir: Path, source_paths: list[Path], run_stamp: str) -> dic
         "draft_sheet": sheet,
         "preview_html": preview_html,
         "preview_path": str(PREVIEW_PATH),
+        "pending_older": older,
         "notes": notes,
     }
 
@@ -242,7 +255,8 @@ def run(mode: str) -> dict[str, Any]:
         drafted = build_drafts(run_dir, source_paths[:2], run_stamp)
         result.update({
             key: drafted[key] for key in
-            ("drafts", "draft_count", "draft_sheet", "preview_html", "preview_path")
+            ("drafts", "draft_count", "draft_sheet", "preview_html", "preview_path",
+             "pending_older")
         })
         result["notes"] += drafted["notes"]
         result["mode"] = "draft"

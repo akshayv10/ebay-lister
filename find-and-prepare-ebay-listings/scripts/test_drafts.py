@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Offline tests for the draft-first review flow.
+"""Offline tests for the draft-then-publish flow.
 
-Covers the draft store, the Drafts-tab encoding round-trips, the reviewer's edits being
-applied (and never overwritten), the price override, the stale-cost guard, and the
-central safety property: drafting must not mutate anything on eBay.
+Covers the draft store, batch selection, parking drafts eBay keeps refusing, the
+stale-cost guard, the sheet encodings, and the central safety property: drafting must
+not mutate anything on eBay.
 
 No network, no eBay, no Google Sheets.
 """
@@ -140,11 +140,6 @@ def test_variants_round_trip_and_preserve_variation_image() -> None:
     assert parsed[0]["image"] == "https://x/red.jpg"
 
 
-def test_publish_column_accepts_the_many_ways_to_tick_it() -> None:
-    for value in ("YES", "yes", "Yes", "TRUE", "true", "1", "x", "✓"):
-        assert draft_sheet.is_approved(value), value
-    for value in ("", "NO", "no", "FALSE", "later", None):
-        assert not draft_sheet.is_approved(value), value
 
 
 def test_draft_row_matches_header_width_and_key_column() -> None:
@@ -165,44 +160,6 @@ def _row_for(draft: dict[str, Any], **cells: Any) -> list[Any]:
         row[draft_sheet.COL[name]] = value
     return row
 
-
-def test_row_edits_are_applied_to_the_source() -> None:
-    with tempfile.TemporaryDirectory() as tmp:
-        draft = sample_draft(Path(tmp))
-        row = _row_for(
-            draft,
-            **{
-                "Title": "Hand-written RC Drift Car Title",
-                "Images": "https://ae01.alicdn.com/kf/a.jpg\nhttps://ae01.alicdn.com/kf/spare.jpg",
-                "Item Specifics": "Brand: Unbranded\nMPN: N/A\nType: Drift Buggy",
-                "Category ID": "182183",
-            },
-        )
-        merged = draft_sheet.apply_edits(draft, draft_sheet.row_edits(row, draft))
-        assert merged["listing_title"] == "Hand-written RC Drift Car Title"
-        assert merged["source_images"][-1] == "https://ae01.alicdn.com/kf/spare.jpg"
-        assert merged["aspects"]["Type"] == ["Drift Buggy"]
-        assert merged["category_id_override"] == "182183"
-        # normalize_source must accept the edited result unchanged.
-        assert normalize_source(merged)["listing_title"] == "Hand-written RC Drift Car Title"
-
-
-def test_clearing_a_cell_falls_back_to_the_stored_draft() -> None:
-    with tempfile.TemporaryDirectory() as tmp:
-        draft = sample_draft(Path(tmp))
-        row = _row_for(draft, **{"Title": "", "Item Specifics": "", "Images": ""})
-        merged = draft_sheet.apply_edits(draft, draft_sheet.row_edits(row, draft))
-        assert merged["listing_title"] == draft["source"]["listing_title"]
-        assert merged["source_images"] == draft["source"]["source_images"]
-
-
-def test_editing_a_draft_never_mutates_the_stored_one() -> None:
-    with tempfile.TemporaryDirectory() as tmp:
-        draft = sample_draft(Path(tmp))
-        original = json.dumps(draft["source"], sort_keys=True)
-        row = _row_for(draft, **{"Title": "Something else entirely"})
-        draft_sheet.apply_edits(draft, draft_sheet.row_edits(row, draft))
-        assert json.dumps(draft["source"], sort_keys=True) == original
 
 
 # -------------------------------------------------------------------- price override
@@ -232,14 +189,6 @@ def test_price_override_at_or_below_cost_is_rejected() -> None:
         else:  # pragma: no cover - the guard must fire
             raise AssertionError(f"override {bad} should have been rejected")
 
-
-def test_sheet_price_override_reaches_every_variant() -> None:
-    with tempfile.TemporaryDirectory() as tmp:
-        draft = sample_draft(Path(tmp))
-        row = _row_for(draft, **{"Price Override USD": "88.00"})
-        merged = draft_sheet.apply_edits(draft, draft_sheet.row_edits(row, draft))
-        assert all(v["price_override"] == "88.00" for v in merged["selected_variants"])
-        assert normalize_source(merged)["selected_variants"][0]["expected_ebay_price"] == "88.00"
 
 
 # ------------------------------------------------------------------ category override
@@ -398,12 +347,15 @@ def test_daily_run_draft_mode_never_publishes() -> None:
     assert draft_index < import_index, "the draft early return must precede any publish call"
 
 
-def test_publish_workflow_is_opt_in() -> None:
+def test_publish_workflow_is_one_press() -> None:
+    """The whole point: Run workflow publishes, with no ticking or extra choices."""
     workflow = (SCRIPTS.parent.parent / ".github" / "workflows" / "publish-drafts.yml").read_text(
         encoding="utf-8"
     )
-    assert "default: dry-run" in workflow, "publishing must be opt-in"
-    assert "--live" in workflow, "publish mode must pass --live"
+    assert "default: publish" in workflow, "running the workflow must publish"
+    assert "dry-run" in workflow, "a validate-only mode must stay available"
+    assert "default: latest" in workflow, "the default scope is the newest batch"
+    assert "--live" in workflow and "--all" in workflow
 
 
 def test_daily_workflow_defaults_to_draft_and_can_revert_to_auto() -> None:
@@ -440,7 +392,7 @@ class _StubListOne:
         return product
 
 
-def _publish(draft, edits, stub, directory):
+def _publish(draft, stub, directory):
     import ebay_listing
 
     original_list_one = ebay_listing.list_one
@@ -451,37 +403,13 @@ def _publish(draft, edits, stub, directory):
     publish_drafts.ali_api = _FakeAli("19.99")
     try:
         with tempfile.TemporaryDirectory() as runs:
-            return publish_drafts.publish_one(draft, edits, object(), {}, Path(runs))
+            return publish_drafts.publish_one(draft, object(), {}, Path(runs))
     finally:
         ebay_listing.list_one = original_list_one
         draft_store.DRAFT_DIR = original_dir
         publish_drafts.ali_api = original_ali
 
 
-def test_publish_sends_the_reviewed_copy_with_enrichment_off() -> None:
-    with tempfile.TemporaryDirectory() as tmp:
-        directory = Path(tmp)
-        draft = sample_draft(directory)
-        row = _row_for(draft, **{
-            "Title": "Reviewer's Own Title",
-            "Price Override USD": "99.00",
-            "Images": "https://ae01.alicdn.com/kf/a.jpg\nhttps://ae01.alicdn.com/kf/spare.jpg",
-        })
-        stub = _StubListOne()
-        outcome = _publish(draft, draft_sheet.row_edits(row, draft), stub, directory)
-
-        assert outcome["status"] == "live"
-        assert outcome["listing_id"] == "1122334455"
-        # The reviewer's edits, not the drafted copy, are what reached eBay.
-        assert stub.seen["source"]["listing_title"] == "Reviewer's Own Title"
-        assert stub.seen["source"]["selected_variants"][0]["expected_ebay_price"] == "99.00"
-        assert "https://ae01.alicdn.com/kf/spare.jpg" in stub.seen["source"]["source_images"]
-        assert stub.seen["enrich"] is False, "publishing must not re-run the AI over the edits"
-
-        stored = draft_store.load(draft["draft_id"], directory)
-        assert stored["status"] == "live"
-        assert stored["published"] is True
-        assert stored["ebay_url"] == "https://www.ebay.com/itm/1122334455"
 
 
 def test_a_failed_publish_leaves_the_draft_retryable() -> None:
@@ -489,27 +417,16 @@ def test_a_failed_publish_leaves_the_draft_retryable() -> None:
         directory = Path(tmp)
         draft = sample_draft(directory)
         stub = _StubListOne(fail="eBay rejected the category")
-        outcome = _publish(draft, {}, stub, directory)
+        outcome = _publish(draft, stub, directory)
 
         assert outcome["status"] == "publish_failed"
         stored = draft_store.load(draft["draft_id"], directory)
         assert stored["published"] is False
-        assert stored["publish_error"] == "eBay rejected the category"
+        assert "eBay rejected the category" in stored["publish_error"]
+        assert "attempt 1 of 2" in stored["publish_error"]
         assert draft_store.is_publishable(stored), "a failed draft must be fixable and re-approved"
 
 
-def test_an_invalid_edit_is_caught_before_ebay_is_touched() -> None:
-    with tempfile.TemporaryDirectory() as tmp:
-        directory = Path(tmp)
-        draft = sample_draft(directory)
-        # An override at cost is rejected by normalize_source.
-        row = _row_for(draft, **{"Price Override USD": "24.50"})
-        stub = _StubListOne()
-        outcome = _publish(draft, draft_sheet.row_edits(row, draft), stub, directory)
-
-        assert outcome["status"] == "blocked"
-        assert stub.seen == {}, "eBay must not be called with an invalid source"
-        assert draft_store.is_publishable(draft_store.load(draft["draft_id"], directory))
 
 
 def test_a_stale_draft_is_blocked_before_ebay_is_touched() -> None:
@@ -526,7 +443,7 @@ def test_a_stale_draft_is_blocked_before_ebay_is_touched() -> None:
         publish_drafts.ali_api = _FakeAli("30.00")  # +40.9% delivered cost
         try:
             with tempfile.TemporaryDirectory() as runs:
-                outcome = publish_drafts.publish_one(draft, {}, object(), {}, Path(runs))
+                outcome = publish_drafts.publish_one(draft, object(), {}, Path(runs))
         finally:
             ebay_listing.list_one = original_list_one
             draft_store.DRAFT_DIR = original_dir
@@ -602,93 +519,8 @@ def test_multi_variant_costs_are_rechecked_per_variation() -> None:
     assert "no longer offered" in message
 
 
-def test_dry_run_reports_invalid_edits_instead_of_passing_them() -> None:
-    """The dry run must resolve edits for real, or it green-lights a broken draft."""
-    with tempfile.TemporaryDirectory() as tmp:
-        directory = Path(tmp)
-        draft = sample_draft(directory)
-        row = _row_for(draft, **{"Price Override USD": "24.50"})  # at cost — invalid
-
-        original_dir, original_ali = draft_store.DRAFT_DIR, publish_drafts.ali_api
-        original_read = draft_sheet.read_approved
-        draft_store.DRAFT_DIR = directory
-        publish_drafts.ali_api = _FakeAli("19.99")
-        draft_sheet.read_approved = lambda **kw: [
-            {"draft_id": draft["draft_id"], "row": 2, "values": row}
-        ]
-        try:
-            result = publish_drafts.run(live=False)
-        finally:
-            draft_store.DRAFT_DIR = original_dir
-            publish_drafts.ali_api = original_ali
-            draft_sheet.read_approved = original_read
-
-        assert result["products"], "the dry run must report on each approved draft"
-        assert "delivered cost" in result["products"][0]["reason"], \
-            "an invalid override must surface in dry run, not only at publish time"
-        assert "0 of 1" in result["error"]
-        # The dry run must not have changed any draft's state.
-        assert draft_store.load(draft["draft_id"], directory)["status"] == "draft"
 
 
-def test_dry_run_leaves_a_valid_draft_untouched() -> None:
-    with tempfile.TemporaryDirectory() as tmp:
-        directory = Path(tmp)
-        draft = sample_draft(directory)
-        row = _row_for(draft, **{"Title": "A perfectly good title"})
-
-        original_dir, original_ali = draft_store.DRAFT_DIR, publish_drafts.ali_api
-        original_read = draft_sheet.read_approved
-        draft_store.DRAFT_DIR = directory
-        publish_drafts.ali_api = _FakeAli("19.99")
-        draft_sheet.read_approved = lambda **kw: [
-            {"draft_id": draft["draft_id"], "row": 2, "values": row}
-        ]
-        try:
-            result = publish_drafts.run(live=False)
-        finally:
-            draft_store.DRAFT_DIR = original_dir
-            publish_drafts.ali_api = original_ali
-            draft_sheet.read_approved = original_read
-
-        assert result["products"][0]["reason"] == "would publish"
-        assert result["products"][0]["title"] == "A perfectly good title"
-        assert "1 of 1" in result["error"]
-
-
-def test_a_failed_publish_keeps_the_reviewers_edits() -> None:
-    """The reviewer must not lose their work exactly when they need to fix it."""
-    with tempfile.TemporaryDirectory() as tmp:
-        directory = Path(tmp)
-        draft = sample_draft(directory)
-        row = _row_for(draft, **{
-            "Title": "Carefully Hand-Written Title",
-            "Images": "https://ae01.alicdn.com/kf/a.jpg\nhttps://ae01.alicdn.com/kf/spare.jpg",
-        })
-        edits = draft_sheet.row_edits(row, draft)
-        _publish(draft, edits, _StubListOne(fail="eBay said no"), directory)
-
-        stored = draft_store.load(draft["draft_id"], directory)
-        assert stored["source"]["listing_title"] == "Carefully Hand-Written Title"
-        assert "https://ae01.alicdn.com/kf/spare.jpg" in stored["source"]["source_images"]
-        # And the row rebuilt from it carries those edits plus the reviewer's tick.
-        rebuilt = draft_sheet.draft_row(stored, "YES")
-        assert rebuilt[draft_sheet.COL["Title"]] == "Carefully Hand-Written Title"
-        assert rebuilt[draft_sheet.COL["Publish?"]] == "YES"
-        assert rebuilt[draft_sheet.COL["Publish Error"]] == "eBay said no"
-
-
-def test_a_live_draft_loses_its_standing_approval() -> None:
-    """A YES left next to a live listing is what would let it publish twice."""
-    with tempfile.TemporaryDirectory() as tmp:
-        directory = Path(tmp)
-        draft = sample_draft(directory)
-        draft_store.mark(draft, draft_store.STATUS_LIVE, directory=directory, listing_id="1")
-        assert draft_sheet.draft_row(draft, "YES")[draft_sheet.COL["Publish?"]] == "NO"
-        # A still-pending draft keeps whatever the reviewer typed.
-        pending_draft = sample_draft(directory)
-        assert draft_sheet.draft_row(pending_draft, "YES")[draft_sheet.COL["Publish?"]] == "YES"
-        assert draft_sheet.draft_row(pending_draft)[draft_sheet.COL["Publish?"]] == "NO"
 
 
 def test_drafted_products_are_excluded_from_the_next_sourcing_run() -> None:
@@ -766,9 +598,223 @@ def test_drafts_email_states_nothing_is_live_and_how_to_publish() -> None:
         assert "1 ready to review" in subject
         assert "NOTHING IS LIVE" in text
         assert draft["draft_id"] in text
-        assert "Set Publish? to YES" in text
+        assert "Run workflow" in text
         assert "https://sheets.example/x" in text
         assert "<html>" in html
+
+
+# ------------------------------------------------- batch selection and the backlog
+
+def _batch(directory: Path, run_stamp: str, product_id: str, **fields: Any) -> dict[str, Any]:
+    """Save one draft belonging to a named batch."""
+    source = normalize_source(sample_source(
+        product_id=product_id,
+        aliexpress_url=f"https://www.aliexpress.us/item/{product_id}.html",
+        run_id=f"{run_stamp}-product-{product_id}",
+    ))
+    draft = draft_store.new_draft(source, run_stamp=run_stamp)
+    draft.update(fields)
+    draft_store.save(draft, directory)
+    return draft
+
+
+def _with_draft_dir(directory: Path, function, *args, **kwargs):
+    original = draft_store.DRAFT_DIR
+    draft_store.DRAFT_DIR = directory
+    try:
+        return function(*args, **kwargs)
+    finally:
+        draft_store.DRAFT_DIR = original
+
+
+def test_only_the_newest_batch_is_selected() -> None:
+    """One press should publish today's two listings, not a week's accumulation."""
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp)
+        _batch(directory, "20260727T212942", "1005006000000001")
+        _batch(directory, "20260727T212942", "1005006000000002")
+        _batch(directory, "20260728T114005", "1005006000000003")
+
+        selected, batch, _ = _with_draft_dir(directory, publish_drafts.select_drafts)
+        assert batch == "20260728T114005"
+        assert [d["product_id"] for d in selected] == ["1005006000000003"]
+
+
+def test_older_drafts_are_reported_not_swept_up() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp)
+        _batch(directory, "20260727T212942", "1005006000000001")
+        _batch(directory, "20260727T212942", "1005006000000002")
+        _batch(directory, "20260728T114005", "1005006000000003")
+
+        backlog = draft_store.backlog(directory, exclude_run_stamp="20260728T114005")
+        assert len(backlog) == 2
+        assert {d["run_stamp"] for d in backlog} == {"20260727T212942"}
+
+
+def test_all_publishes_the_whole_backlog() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp)
+        _batch(directory, "20260727T212942", "1005006000000001")
+        _batch(directory, "20260728T114005", "1005006000000003")
+        selected, batch, _ = _with_draft_dir(
+            directory, publish_drafts.select_drafts, publish_all=True
+        )
+        assert batch == "all"
+        assert len(selected) == 2
+
+
+def test_a_named_batch_can_be_published() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp)
+        _batch(directory, "20260727T212942", "1005006000000001")
+        _batch(directory, "20260728T114005", "1005006000000003")
+        selected, batch, _ = _with_draft_dir(
+            directory, publish_drafts.select_drafts, run_stamp="20260727T212942"
+        )
+        assert batch == "20260727T212942"
+        assert [d["product_id"] for d in selected] == ["1005006000000001"]
+
+
+def test_live_drafts_are_never_reselected() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp)
+        draft = _batch(directory, "20260728T114005", "1005006000000003")
+        draft_store.mark(draft, draft_store.STATUS_LIVE, directory=directory, listing_id="1")
+        selected, batch, _ = _with_draft_dir(directory, publish_drafts.select_drafts)
+        assert selected == []
+        assert batch == ""
+
+
+# ------------------------------------------------------------------------ parking
+
+def test_a_draft_ebay_keeps_refusing_is_parked() -> None:
+    """The real case: a branded medical device eBay will never accept must stop being
+    retried on every press."""
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp)
+        draft = _batch(directory, "20260728T114005", "1005006000000003",
+                       status=draft_store.STATUS_PUBLISH_FAILED, publish_attempts=1)
+        draft_store.save(draft, directory)
+        assert draft_store.auto_selectable(draft), "one failure is still worth a retry"
+
+        draft["publish_attempts"] = 2
+        draft_store.save(draft, directory)
+        assert draft_store.is_parked(draft)
+        assert not draft_store.auto_selectable(draft)
+        selected, _, _ = _with_draft_dir(directory, publish_drafts.select_drafts)
+        assert selected == [], "a parked draft must not be picked up automatically"
+
+
+def test_a_parked_draft_can_still_be_forced_by_id() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp)
+        draft = _batch(directory, "20260728T114005", "1005006000000003",
+                       status=draft_store.STATUS_PUBLISH_FAILED, publish_attempts=5)
+        draft_store.save(draft, directory)
+        selected, _, notes = _with_draft_dir(
+            directory, publish_drafts.select_drafts, only_draft_id=draft["draft_id"]
+        )
+        assert len(selected) == 1
+        assert any("parked" in note for note in notes)
+
+
+def test_a_failed_publish_increments_the_attempt_count() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp)
+        draft = sample_draft(directory)
+        _publish(draft, _StubListOne(fail="eBay refused"), directory)
+        first = draft_store.load(draft["draft_id"], directory)
+        assert draft_store.attempts(first) == 1
+        assert not draft_store.is_parked(first)
+
+        _publish(first, _StubListOne(fail="eBay refused"), directory)
+        second = draft_store.load(draft["draft_id"], directory)
+        assert draft_store.attempts(second) == 2
+        assert draft_store.is_parked(second), "the second refusal parks it"
+        assert "parked" in second["publish_error"]
+
+
+def test_a_cost_block_does_not_count_as_an_attempt() -> None:
+    """A stale price is our refusal, not eBay's — it should not burn a retry."""
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp)
+        draft = sample_draft(directory)
+        original_ali, original_dir = publish_drafts.ali_api, draft_store.DRAFT_DIR
+        publish_drafts.ali_api = _FakeAli("30.00")  # +40% cost
+        draft_store.DRAFT_DIR = directory
+        try:
+            with tempfile.TemporaryDirectory() as runs:
+                outcome = publish_drafts.publish_one(draft, object(), {}, Path(runs))
+        finally:
+            publish_drafts.ali_api = original_ali
+            draft_store.DRAFT_DIR = original_dir
+        assert outcome["status"] == "blocked"
+        assert draft_store.attempts(draft_store.load(draft["draft_id"], directory)) == 0
+
+
+# ---------------------------------------------------------- independence from the sheet
+
+def test_publishing_never_reads_the_sheet() -> None:
+    """Selection comes from disk, so a Sheets outage cannot stop a publish."""
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp)
+        _batch(directory, "20260728T114005", "1005006000000003")
+
+        def explode(*args, **kwargs):
+            raise AssertionError("publishing must not read the Drafts tab")
+
+        original = getattr(draft_sheet, "read_all_rows", None)
+        draft_sheet.read_all_rows = explode
+        try:
+            selected, batch, _ = _with_draft_dir(directory, publish_drafts.select_drafts)
+        finally:
+            if original is not None:
+                draft_sheet.read_all_rows = original
+        assert len(selected) == 1 and batch == "20260728T114005"
+
+
+def test_the_sheet_has_no_approval_column() -> None:
+    """A control that no longer controls anything is worse than no control."""
+    assert "Publish?" not in draft_sheet.HEADERS
+    assert "Batch" in draft_sheet.HEADERS
+    for gone in ("read_approved", "row_edits", "apply_edits", "is_approved"):
+        assert not hasattr(draft_sheet, gone), f"{gone} should have been removed"
+
+
+def test_the_row_shows_which_batch_it_belongs_to() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        draft = sample_draft(Path(tmp))
+        row = draft_sheet.draft_row(draft)
+        assert row[draft_sheet.COL["Batch"]] == draft["run_stamp"]
+
+
+def test_publish_result_email_reports_pending_and_parked() -> None:
+    subject, text, _ = notify.compose({
+        "status": "listed", "date": "2026-07-28", "listed_count": 1, "expected_count": 1,
+        "products": [],
+        "pending": [{"run_stamp": "20260727T212942", "title": "Tesla Sun Shade"}],
+        "parked": [{"title": "Dr Pen Ultima M8S", "attempts": 2, "error": "eBay policy"}],
+    })
+    assert "1 draft(s) still pending" in text
+    assert "Tesla Sun Shade" in text
+    assert "parked after repeated eBay refusals" in text
+    assert "Dr Pen Ultima M8S" in text
+
+
+def test_drafts_email_lists_older_pending_drafts() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        draft = sample_draft(Path(tmp))
+        _, text, _ = notify.compose_drafts({
+            "date": "2026-07-28", "niche": "hobby", "drafts": [draft], "draft_count": 1,
+            "pending_older": [
+                {"created_at": "2026-07-27T21:29:42Z", "title": "Tesla Sun Shade", "parked": False},
+                {"created_at": "2026-07-27T21:29:42Z", "title": "Dr Pen", "parked": True},
+            ],
+        })
+        assert "2 older draft(s) are still waiting" in text
+        assert "Tesla Sun Shade" in text
+        assert "[parked" in text
 
 
 def _run_all() -> int:
