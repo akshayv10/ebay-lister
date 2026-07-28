@@ -6,7 +6,7 @@
   "notes": [],
   "product_id": "3256805362453341",
   "publish_allowed": false,
-  "publish_error": "",
+  "publish_error": "eBay API POST https://api.ebay.com/sell/inventory/v1/offer/218181373011/publish failed with HTTP 400: Cannot revise listing. The item cannot be listed or modified. The title and/or description may contain improper words, or the listing or seller may be in violation of eBay policy.",
   "published": false,
   "run_stamp": "20260728T114005",
   "source": {
@@ -29,7 +29,9 @@
         "No"
       ],
       "Features": [
-        "Wireless, Adjustable Speed, LED Display"
+        "Wireless",
+        "Adjustable Speed",
+        "LED Display"
       ],
       "MPN": [
         "N/A"
@@ -51,6 +53,7 @@
       ]
     },
     "assigned_niche": "Beauty & Self Care",
+    "category_id_override": "33164",
     "category_query": "Authentic Dr pen Ultima M8S With 22 pcs Needle Pin Microneedling Pen Wireless",
     "condition": "NEW",
     "functional_fingerprint": "authentic dr pen ultima m8s with 22 pcs needle pin microneedling pen wireless derma pen beauty machine needle length 0 25 mm",
@@ -84,8 +87,8 @@
     "verified_brand": "Unbranded"
   },
   "spare_images": [],
-  "status": "draft",
-  "updated_at": "2026-07-28T06:11:47Z",
+  "status": "publish_failed",
+  "updated_at": "2026-07-28T10:29:59Z",
   "validation": {
     "category_id": "33164",
     "normalized_aspects": {
