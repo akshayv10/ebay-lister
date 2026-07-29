@@ -1,11 +1,12 @@
 # Daily AliExpress → eBay draft-and-publish lister
 
-Sources **2 AliExpress products/day** (configurable — see
+Sources **2 AliExpress products per run** (configurable — see
 [How many products per run](#how-many-products-per-run)) via the official AliExpress API, prepares a
 complete eBay listing for each, and **emails you a draft to review**. You check it,
-change anything you want, tick a box, and then it goes live. Runs unattended in
-GitHub Actions (your computer can be off). Successful live listings are upserted into
-the workbook's **Auto Lister** tab. Cost ≈ $0/month.
+change anything you want, tick a box, and then it goes live. Runs in GitHub Actions
+(your computer can be off) — **you press the button; there is no daily schedule**.
+Successful live listings are upserted into the workbook's **Auto Lister** tab.
+Cost ≈ $0/month.
 
 **Nothing is listed without your approval** — this is the default. If you'd rather go
 back to fully automatic listing, set the repository variable `LISTING_MODE=auto`
@@ -18,9 +19,11 @@ The pipeline is Python 3.11. Google service-account authentication uses
 
 There are two steps, and you are the gate between them.
 
-### Step 1 — the daily draft run
+### Step 1 — the draft run
 
-`find-and-prepare-ebay-listings/scripts/daily_run.py --draft` runs on the schedule:
+**The daily schedule is off** — nothing runs on its own. You start a run from
+**Actions → Daily eBay auto-lister → Run workflow**, and
+`find-and-prepare-ebay-listings/scripts/daily_run.py --draft`:
 
 1. Picks the day's niche (5-niche rotation, `daily_history.py`).
 2. Sources 2 qualifying products via `ali_api.py` (rating/orders/price/US gates,
@@ -29,6 +32,11 @@ There are two steps, and you are the gate between them.
    volume, functionally distinct).
 3. Enriches each one — real AliExpress variations plus the AI-written title,
    description, and item specifics — so the draft you review is the finished listing.
+   **The AI title never carries a brand name**: the prompt forbids it, the model reports
+   any brand it saw, and `openai_copy.strip_brands` removes that brand (plus anything on
+   the sourcing blocklist) from the title before it is saved. Every listing goes out
+   `Brand: Unbranded`, so a brand in the title would contradict its own item specifics —
+   which is what got the Dr Pen draft rejected under eBay policy.
 4. Validates each against eBay **read-only**: resolves the category and required item
    specifics through the Taxonomy API. **Nothing is created on eBay.** No images are
    uploaded, no inventory item or offer is written.
@@ -152,8 +160,9 @@ Dropshipping permission" — two problems that look identical from the sheet.
 Two per run is the default, everywhere. To source only one:
 
 - **For one run:** **Actions → Daily eBay auto-lister → Run workflow → products: `1`**.
-- **For the schedule:** set the repository variable `PRODUCTS_PER_RUN` to `1`. Delete it
-  (or set it to `2`) to go back to two a day.
+- **For every run:** set the repository variable `PRODUCTS_PER_RUN` to `1`. Delete it
+  (or set it to `2`) to go back to two. This is also what a scheduled run would read if
+  you turn the schedule back on.
 - **Locally:** `python3 daily_run.py --draft --count 1`.
 
 The setting applies to whichever mode the run is in — draft, live, or dry run — and the
@@ -166,8 +175,9 @@ quality gates. A missing or unparseable value falls back to 2.
 The original publish-immediately pathway is untouched and still available:
 
 - **For the schedule:** set the repository variable `LISTING_MODE` to `auto`. Scheduled
-  runs then publish both products immediately, exactly as before. Delete the variable (or
-  set it to `draft`) to go back to reviewing.
+  runs then publish both products immediately, exactly as before — but the schedule is
+  currently off, so this does nothing until you re-enable it. Delete the variable (or set
+  it to `draft`) to go back to reviewing.
 - **For one run:** **Actions → Daily eBay auto-lister → Run workflow → mode: `full`**.
 - **Locally:** `python3 daily_run.py --live`.
 
@@ -220,7 +230,7 @@ Sender and recipient are independent: you can send from one account and receive 
 4. Save the complete JSON key as the GitHub Actions secret
    `GOOGLE_SERVICE_ACCOUNT_JSON`.
 
-The scheduled workflow writes only to a separate `Auto Lister` tab in spreadsheet
+The workflow writes only to a separate `Auto Lister` tab in spreadsheet
 `10GgtsN_cxhHBvbEYa4vUXBUbC-LqeElkzmRiL3TT0Uk`. It does not modify the legacy
 `Ebay` tab.
 
@@ -246,8 +256,9 @@ for a single product per run), `SHEETS_DRAFT_TAB_NAME` (default `Drafts`),
 publish, using a plain template description instead of AI copy.
 
 ### 6. Running it
-The daily workflow runs at **09:00 IST (03:30 UTC)** and, by default, **drafts for
-review** — it lists nothing on its own.
+The workflow is **manual only** — the 09:00 IST schedule is commented out in
+`daily.yml`, so nothing happens until you press the button. By default a run **drafts for
+review** and lists nothing.
 
 **Actions → Daily eBay auto-lister → Run workflow**, then pick a mode:
 
@@ -268,12 +279,13 @@ Notes:
   table above).
 - Locally, `python3 daily_run.py` is always a dry run; `--draft` saves drafts and only
   `--live` publishes. Same for `publish_drafts.py`: `--live` is required to list.
-- To pause everything, comment out the `schedule` block in `daily.yml` or disable the
-  workflow in the Actions tab.
+- The schedule is already off. To stop manual runs too, disable the workflow in the
+  Actions tab.
 
-To enable the daily schedule later, uncomment the two `schedule` lines in
-`.github/workflows/daily.yml` and set the cron to your time **in UTC**. Scheduled runs
-already publish — they are included in the LIVE condition in the run step.
+To turn the daily schedule back on, uncomment the two `schedule` lines in
+`.github/workflows/daily.yml` (09:00 IST = `30 3 * * *`; any other time must be set **in
+UTC**). Everything downstream still understands a scheduled run, including the LIVE
+condition in the run step — so with `LISTING_MODE=auto` a scheduled run publishes.
 
 ## Prepare a verified pair from `find-resale-products`
 

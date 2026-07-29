@@ -91,6 +91,70 @@ def test_missing_key_raises_copyerror() -> None:
     raise AssertionError("expected CopyError when OPENAI_API_KEY is unset")
 
 
+def test_brand_rules_and_brand_field_are_in_the_request() -> None:
+    os.environ["OPENAI_API_KEY"] = "test-key"
+    seen = {}
+
+    def transport(body):
+        seen["prompt"] = body["input"][1]["content"][0]["text"]
+        seen["schema"] = body["text"]["format"]["schema"]
+        return _fake_transport(body)
+
+    openai_copy.generate_listing("USB C Hub", "USB Hubs", "18.00", ["https://x/a.jpg"], transport=transport)
+    assert "BRAND NAMES" in seen["prompt"], "the no-brand instruction must reach the model"
+    assert "brand" in seen["schema"]["properties"], "the model must report the brand it saw"
+
+
+def test_reported_brand_is_stripped_from_the_generated_title() -> None:
+    """Every listing goes out Brand=Unbranded, so a brand in the title contradicts it."""
+    os.environ["OPENAI_API_KEY"] = "test-key"
+
+    def branded_transport(body):
+        listing = {
+            "title": "Dr Pen Ultima M8S Microneedling Derma Pen Wireless Skin Care Tool 16 Pin 6 Speeds",
+            "description": "<p>Adjustable microneedling pen.</p>",
+            "itemSpecifics": {"Type": "Derma Pen"},
+            "brand": "Dr Pen",
+        }
+        return {"output_text": __import__("json").dumps(listing)}
+
+    result = openai_copy.generate_listing("Dr Pen M8S", "Beauty", "30.00", [], transport=branded_transport)
+    assert "dr pen" not in result["title"].casefold(), result["title"]
+    # What is left must still be a usable, tidy listing title.
+    assert result["title"].startswith("Ultima M8S Microneedling"), result["title"]
+    assert "  " not in result["title"] and result["detected_brand"] == "Dr Pen"
+
+
+def test_all_brand_title_falls_back_to_the_template() -> None:
+    os.environ["OPENAI_API_KEY"] = "test-key"
+
+    def transport(body):
+        listing = {"title": "Dr Pen Ultima", "description": "<p>x</p>",
+                   "itemSpecifics": {}, "brand": "Dr Pen Ultima"}
+        return {"output_text": __import__("json").dumps(listing)}
+
+    try:
+        openai_copy.generate_listing("x", "y", "1", [], transport=transport)
+    except openai_copy.CopyError:
+        return
+    raise AssertionError("a title that is entirely brand must raise, not list a stub")
+
+
+def test_strip_brands_edge_cases() -> None:
+    strip = openai_copy.strip_brands
+    # Global brands from the sourcing blocklist are caught with no help from the model.
+    assert strip("Wireless Charger Stand for Samsung Galaxy S24") == "Wireless Charger Stand for S24"
+    # Whole words only — a brand inside another word must survive.
+    assert strip("Applesauce Maker Kitchen Tool") == "Applesauce Maker Kitchen Tool"
+    # Longest match first, and separators left behind are tidied.
+    assert strip("Under Armour - Gym Bag 40L") == "Gym Bag 40L"
+    assert strip("Case + Cover for Sony", ["Sony"]) == "Case + Cover for"
+    # Non-brand placeholders must never be stripped out of a title.
+    assert strip("Unbranded Universal Phone Mount", ["Unbranded"]) == "Unbranded Universal Phone Mount"
+    # Nothing to do.
+    assert strip("6-in-1 USB C Hub 4K HDMI 100W PD") == "6-in-1 USB C Hub 4K HDMI 100W PD"
+
+
 def _run_all() -> int:
     tests = [v for n, v in sorted(globals().items()) if n.startswith("test_") and callable(v)]
     failures = 0

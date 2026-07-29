@@ -32,16 +32,21 @@ def test_publishing_is_gated_on_live_flag() -> None:
     assert dry_index < import_index, "the dry-run early return must precede any eBay call"
 
 
-def test_workflow_schedule_is_exactly_9am_ist() -> None:
-    # Automation is intentionally live (user-approved): daily at 09:00 IST = 03:30 UTC,
-    # no DST in IST. A schedule change here must be a deliberate edit, not a drift.
+def test_workflow_has_no_active_schedule() -> None:
+    # The daily run is paused at the user's request — it fires only on a manual dispatch.
+    # Automation coming back must be a deliberate edit, not a drift, so this fails the
+    # moment any cron line is uncommented.
     text = WORKFLOW.read_text(encoding="utf-8")
     active_schedule = [
         line for line in text.splitlines()
         if re.match(r"^\s*-\s*cron:", line) and not line.lstrip().startswith("#")
     ]
-    assert len(active_schedule) == 1, f"expected exactly one active schedule, found: {active_schedule}"
-    assert '"30 3 * * *"' in active_schedule[0], f"expected 09:00 IST (30 3 * * *), found: {active_schedule}"
+    assert not active_schedule, f"the daily schedule must stay off, found: {active_schedule}"
+    assert "workflow_dispatch:" in text, "the manual button must remain"
+    # The pause is a comment-out, not a delete: re-enabling stays a one-line change.
+    assert '# - cron: "30 3 * * *"' in text.replace("#   -", "# -"), (
+        "keep the 09:00 IST cron commented in place so it can be restored"
+    )
 
 
 def test_workflow_defaults_to_draft_mode() -> None:
