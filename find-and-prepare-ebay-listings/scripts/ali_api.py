@@ -1025,7 +1025,17 @@ def access_token() -> str:
 
 
 def get_product_detail(product_id: str) -> dict[str, Any]:
-    """Full product detail including SKUs/variants. Requires a seller access_token."""
+    """Full product detail including SKUs/variants. Requires a seller access_token.
+
+    In fixture mode (``ALI_API_FIXTURE``, offline testing only — the variable is never
+    set in the workflows) the detail is served from the fixture by product id, so the
+    hand-picked-link paths can be exercised end-to-end without a token or a network."""
+    fixture = _load_fixture()
+    if fixture is not None:
+        for card in fixture:
+            if _card_id(card) == str(product_id):
+                return card
+        raise AliError(f"ALI_API_FIXTURE has no product {product_id}")
     token = access_token()
     if not token:
         raise AliError("ALIEXPRESS_ACCESS_TOKEN is not set (needed for variant data)")

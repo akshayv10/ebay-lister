@@ -322,6 +322,46 @@ python3 list_from_url.py "https://www.aliexpress.us/item/<id>.html"
 python3 inbox_poll.py            # dry-run poll of the inbox
 ```
 
+## List products you picked yourself (one text box)
+
+The daily run decides *what* to sell. This path doesn't — you do. You did the research,
+you found the products, so paste the links and press the button.
+
+**Actions → List picked products → Run workflow**, paste the AliExpress link(s) into the
+**links** box, Run. One link lists one product; two list two. The box is free text: any
+separator works, and prose around the links is ignored, so pasting straight out of your
+notes is fine.
+
+Unlike the daily workflow this one **defaults to `live`** — pressing Run publishes real
+eBay listings, with the same chain as everything else (AI title/description, real
+variations, eBay Picture Services images, qty 1, your policies, publish + 10% General
+promotion), then emails you the eBay links and upserts the **Auto Lister** rows. Pick
+mode `dry-run` to fetch and validate without touching eBay or sending email.
+
+**Quality gates are advisory here.** Because the products came from you they are
+pre-approved: a rating / reviews / orders / price miss is reported as a warning in the
+report email and the item is listed anyway. Only a product that can't be listed at all
+(no id, title, price, or images) is refused — and refusing one never stops the other.
+
+Details:
+
+- Links are deduplicated by product id, so pasting the same item in two forms lists it
+  once. Non-AliExpress links in the text are ignored.
+- Mobile share links (`a.aliexpress.com/_…`) are followed to the real product page. If
+  one can't be resolved it's skipped with a note naming it, and the rest still list.
+- `PICKED_MAX_PRODUCTS` (repository variable, default `5`) caps how many links one run
+  accepts, so a stray bulk paste can't turn into a dozen listings.
+- Needs `ALIEXPRESS_ACCESS_TOKEN`, like the daily run.
+
+Run it locally (dry run by default; `--live` publishes):
+
+```bash
+cd find-and-prepare-ebay-listings/scripts
+python3 list_picked.py --links "https://www.aliexpress.us/item/<id>.html"
+python3 list_picked.py --links "$(pbpaste)" --live
+pbpaste | python3 list_picked.py            # links on stdin
+```
+
 ## Testing offline (no network, no eBay)
 
 Every `test_*.py` runs automatically on pull requests and pushes to `main`
@@ -340,6 +380,7 @@ Individually:
 cd find-and-prepare-ebay-listings/scripts
 python3 test_ali_api.py            # sourcing/gates/mapping
 python3 test_list_from_url.py      # on-demand single-URL lister (URL parse, gate warning)
+python3 test_list_picked.py        # picked-products lister (link extraction, advisory gates)
 python3 test_skill.py              # eBay-side regression (never hits Production)
 python3 test_drafts.py             # draft flow: edits, price override, stale-cost guard
 python3 test_safety.py             # dry-run-by-default and draft-by-default posture
@@ -347,6 +388,13 @@ python3 test_collect_images.py     # image collection: classification, ordering,
 ALI_API_FIXTURE="$PWD/fixtures/ali_sample.json" \
   HISTORY_PATH=/tmp/h.jsonl RUNS_DIR=/tmp/runs \
   python3 daily_run.py --dry-run   # full pipeline, writes source.json, prints nothing to eBay
+
+# Picked-products flow end-to-end, offline: two links in one blob, nothing listed.
+ALI_API_FIXTURE="$PWD/fixtures/ali_sample.json" \
+  HISTORY_PATH=/tmp/h.jsonl RUNS_DIR=/tmp/runs \
+  python3 list_picked.py --no-email --links \
+  "https://www.aliexpress.us/item/1005006000000001.html
+   and this one too https://www.aliexpress.com/item/1005006000000002.html?spm=x"
 
 # Draft flow end-to-end, offline: writes /tmp/drafts/*.json and a review page you can open.
 ALI_API_FIXTURE="$PWD/fixtures/ali_sample.json" \

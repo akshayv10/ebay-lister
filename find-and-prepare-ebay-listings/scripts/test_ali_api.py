@@ -217,6 +217,31 @@ def test_detail_enrichment_uses_fuller_gallery() -> None:
     assert len(images) == 4  # 1 feed image + 3 detail images, merged and deduped
 
 
+def test_get_product_detail_serves_the_fixture_offline() -> None:
+    # Fixture mode must not need a seller token: it is what lets the hand-picked-link
+    # paths (list_from_url.py / list_picked.py) be dry-run end-to-end with no network.
+    os.environ["ALI_API_FIXTURE"] = str(FIXTURE)
+    os.environ.pop("ALIEXPRESS_ACCESS_TOKEN", None)
+    detail = ali_api.get_product_detail("1005006000000002")
+    assert ali_api.flatten_detail(detail)["id"] == "1005006000000002"
+    try:
+        ali_api.get_product_detail("1005009999999999")
+    except ali_api.AliError as exc:
+        assert "no product" in str(exc)
+    else:
+        raise AssertionError("an unknown id must raise rather than reach the network")
+
+
+def test_get_product_detail_still_requires_a_token_without_a_fixture() -> None:
+    with _patch(delenv=("ALI_API_FIXTURE", "ALIEXPRESS_ACCESS_TOKEN")):
+        try:
+            ali_api.get_product_detail("1005006000000001")
+        except ali_api.AliError as exc:
+            assert "ALIEXPRESS_ACCESS_TOKEN" in str(exc)
+        else:
+            raise AssertionError("the token requirement must survive outside fixture mode")
+
+
 def test_source_products_finds_two() -> None:
     os.environ["ALI_API_FIXTURE"] = str(FIXTURE)
     sources, _ = ali_api.source_products(
