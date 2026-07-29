@@ -236,8 +236,12 @@ publish one specific draft (including a parked one).
 
 Notes:
 
-- The daily run needs `ALIEXPRESS_ACCESS_TOKEN` set, or it sources nothing (see the secrets
-  table above).
+- The daily run works **without** `ALIEXPRESS_ACCESS_TOKEN`, in a degraded mode: it
+  sources from feed data (orders + approximate rating), skips the review-count gate,
+  lists single-variation, and estimates shipping instead of calling real freight. It does
+  reject any candidate whose feed card carries no rating at all, since an unverified
+  rating can't be allowed to pass `ALI_MIN_RATING`. Set the token to get authoritative
+  ratings, the review-count gate, real per-SKU freight, and multi-variant listings.
 - Locally, `python3 daily_run.py` is always a dry run; `--draft` saves drafts and only
   `--live` publishes. Same for `publish_drafts.py`: `--live` is required to list.
 - The schedule is already off. To stop manual runs too, disable the workflow in the
@@ -351,7 +355,31 @@ Details:
   one can't be resolved it's skipped with a note naming it, and the rest still list.
 - `PICKED_MAX_PRODUCTS` (repository variable, default `5`) caps how many links one run
   accepts, so a stray bulk paste can't turn into a dozen listings.
-- Needs `ALIEXPRESS_ACCESS_TOKEN`, like the daily run.
+
+### Why this path needs `ALIEXPRESS_ACCESS_TOKEN` when the daily run doesn't
+
+Not a quirk of this workflow — it falls out of which AliExpress method answers which
+question. `_call` itself only needs the app key and secret; the token is a per-method
+parameter, and only two methods send it.
+
+| | Method | Token? |
+| --- | --- | --- |
+| Daily run discovery | `aliexpress.ds.recommend.feed.get` | no |
+| A link you picked | `aliexpress.ds.product.get` | **yes** |
+
+The daily run never names a product — it takes whatever the feed hands it, which is why
+it sources fine without a token. This path is *defined* by naming one, and
+`ds.product.get` is the only DS method that answers "give me this exact product". DS apps
+can't keyword-search either, so there's no way to reach a specific id through discovery.
+Without the token this workflow can't degrade the way the daily run does; it simply has
+no answer, and every link fails to prepare.
+
+Whether the affiliate method `aliexpress.affiliate.productdetail.get` could close that
+gap token-free depends on permissions granted to your AliExpress app. To find out:
+**Actions → Probe AliExpress product detail → Run workflow** with any product id. It's
+read-only — two `.get` calls, nothing created or listed — and prints a verdict plus
+AliExpress's real error code. See [Probing the token-free
+path](#probing-the-token-free-path).
 
 Run it locally (dry run by default; `--live` publishes):
 
@@ -361,6 +389,44 @@ python3 list_picked.py --links "https://www.aliexpress.us/item/<id>.html"
 python3 list_picked.py --links "$(pbpaste)" --live
 pbpaste | python3 list_picked.py            # links on stdin
 ```
+
+## Probing the token-free path
+
+`scripts/probe_ali_detail.py` answers one question: can this app fetch a *named* product
+without a seller token, via `aliexpress.affiliate.productdetail.get`? That method takes
+the app key/secret plus your tracking ID and sends no `access_token` — if your app is
+granted it, the picked-links path could work with no token at all.
+
+Whether it is granted depends on your AliExpress app registration, not on this code, so
+only a real signed call can tell you. That's all the probe does.
+
+**Actions → Probe AliExpress product detail → Run workflow**, with any product id or URL.
+Or locally, with the AliExpress keys in your environment:
+
+```bash
+cd find-and-prepare-ebay-listings/scripts
+python3 probe_ali_detail.py https://www.aliexpress.us/item/<id>.html
+```
+
+It is **read-only**: two `.get` calls, nothing created, purchased, or listed. The job
+gets no eBay, Sheets, OpenAI or SMTP secrets, writes nothing back to the repo, and prints
+booleans for which credentials are set — never their values.
+
+The report checks the token-gated `ds.product.get` too (when a token is set), so a dead
+token is distinguishable from a missing permission, and it runs any affiliate response
+through the parsers the pipeline already uses (`_feed_products` → `flatten_card`) — a
+`200` alone wouldn't prove the response is usable. Three possible verdicts:
+
+- **affiliate fallback viable** — the token-free path works. Note the ceiling: affiliate
+  carries no SKU/variant records and no freight, so listings would be single-variation
+  with estimated shipping, the same fidelity the daily run has today. Variants still need
+  the seller token.
+- **affiliate permission missing** — that route is closed; minting the token is the only
+  path. `mint_ali_token.py --check` tells you whether the one you have still works.
+- **affiliate reachable but response unusable** — the report names the missing fields.
+
+The run exits non-zero on the last two, so a red X on the Actions run *is* the answer,
+not a broken workflow.
 
 ## Testing offline (no network, no eBay)
 
@@ -381,6 +447,7 @@ cd find-and-prepare-ebay-listings/scripts
 python3 test_ali_api.py            # sourcing/gates/mapping
 python3 test_list_from_url.py      # on-demand single-URL lister (URL parse, gate warning)
 python3 test_list_picked.py        # picked-products lister (link extraction, advisory gates)
+python3 test_probe_ali_detail.py   # token-free probe (affiliate mapping, no credential leaks)
 python3 test_skill.py              # eBay-side regression (never hits Production)
 python3 test_drafts.py             # draft flow: edits, price override, stale-cost guard
 python3 test_safety.py             # dry-run-by-default and draft-by-default posture

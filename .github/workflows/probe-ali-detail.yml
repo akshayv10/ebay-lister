@@ -1,0 +1,56 @@
+name: Probe AliExpress product detail
+run-name: Probe AliExpress detail / ${{ inputs.product }}
+
+# Diagnostic only. Answers one question: can this app fetch a named product WITHOUT a
+# seller access token, via the affiliate method?
+#
+# The daily run sources products token-free because feed discovery
+# (aliexpress.ds.recommend.feed.get) needs no token. The hand-picked-link paths name a
+# specific product, and the DS method that answers that (aliexpress.ds.product.get) is
+# token-gated. aliexpress.affiliate.productdetail.get would close the gap — if this app
+# is granted it, which only a real signed call can establish.
+#
+# READ-ONLY: two `.get` calls. Nothing is created, purchased, or listed. No eBay, Sheets,
+# OpenAI or SMTP secrets are exposed to this job, no artifact is uploaded, and nothing is
+# committed — the workflow only prints its diagnosis to the log.
+on:
+  workflow_dispatch:
+    inputs:
+      product:
+        description: "AliExpress product URL or bare product id to probe"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: probe-ali-detail
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    env:
+      ALI_DEBUG: ${{ vars.ALI_DEBUG || '0' }}
+      ALIEXPRESS_APP_KEY: ${{ secrets.ALIEXPRESS_APP_KEY }}
+      ALIEXPRESS_APP_SECRET: ${{ secrets.ALIEXPRESS_APP_SECRET }}
+      ALIEXPRESS_TRACKING_ID: ${{ secrets.ALIEXPRESS_TRACKING_ID }}
+      ALIEXPRESS_ACCESS_TOKEN: ${{ secrets.ALIEXPRESS_ACCESS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      # PRODUCT comes through the environment, never interpolated into the script body —
+      # same injection rule as list-picked.yml.
+      - name: Probe
+        env:
+          PRODUCT: ${{ inputs.product }}
+        run: |
+          python find-and-prepare-ebay-listings/scripts/probe_ali_detail.py "$PRODUCT"
