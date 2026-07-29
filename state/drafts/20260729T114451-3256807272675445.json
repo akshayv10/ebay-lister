@@ -1,0 +1,128 @@
+{
+  "created_at": "2026-07-29T06:16:39Z",
+  "draft_id": "20260729T114451-3256807272675445",
+  "ebay_url": "",
+  "listing_id": "",
+  "notes": [],
+  "product_id": "3256807272675445",
+  "publish_allowed": false,
+  "publish_error": "",
+  "published": false,
+  "run_stamp": "20260729T114451",
+  "source": {
+    "aliexpress_orders": 2349.0,
+    "aliexpress_rating": 4.8149999999999995,
+    "aliexpress_url": "https://www.aliexpress.us/item/3256807272675445.html",
+    "appeal_reason": "top seller in niche (2349 orders)",
+    "appeal_score": 2349.0,
+    "aspects": {
+      "Brand": [
+        "Unbranded"
+      ],
+      "Color": [
+        "Multi-color Holographic and Black PEI"
+      ],
+      "Compatible Brand": [
+        "Bambu Lab"
+      ],
+      "Custom Bundle": [
+        "No"
+      ],
+      "Features": [
+        "Double-sided, Flexible, Easy Removal"
+      ],
+      "MPN": [
+        "N/A"
+      ],
+      "Material": [
+        "Spring Steel"
+      ],
+      "Model": [
+        "X1C P1P P1S P2S A1 X1"
+      ],
+      "Modified Item": [
+        "No"
+      ],
+      "Number of Items": [
+        "1"
+      ],
+      "Type": [
+        "Build Plate"
+      ]
+    },
+    "assigned_niche": "Smartphone Accessories",
+    "category_query": "X1C P1P P1S P2S A1 X1 Build Plate for Bambu Lab A1 Smooth PEI Sheet PEO PET for",
+    "condition": "NEW",
+    "functional_fingerprint": "x1c p1p p1s p2s a1 x1 build plate for bambu lab a1 smooth pei sheet peo pet for bambulab a1 p1p 3d printer heatbed build plate",
+    "inventory_item_group_key": "",
+    "listing_description": "<p>High-adhesion 257x257mm / 10.1x10.1in dual-sided flexible build plate for Bambu Lab 3D printers ensures stable printing and easy model removal.</p><p>This build plate solves common printing problems like warping and adhesion failure by providing a specially coated PEI surface that grips filament effectively. It allows you to print with confidence and remove models effortlessly using the flexible steel plate design.</p><h3>Key Features</h3><ul><li><strong>Strong Adhesion:</strong> Black PEI surface provides firm filament stickiness for even printing without warpage.</li><li><strong>Easy Model Removal:</strong> Flexible spring steel lets you bend the plate gently after printing to pop off models without tools.</li><li><strong>Double-Sided Use:</strong> Features unique colourful patterns on both sides for versatile printing options.</li><li><strong>Durable Material:</strong> Made from high-strength spring steel for long-lasting use and resistance to wear.</li><li><strong>Easy to Clean:</strong> Wipe with wet tissue or alcohol before printing to remove dust or fingerprints.</li></ul><hr><h3>Specifications</h3><ul><li>Size: 257mm x 257mm / 10.1in x 10.1in</li><li>Material: Spring Steel with PEI Coating</li><li>Weight: Approximately 150g / 5.3oz</li><li>Compatible Models: Bambu Lab X1, X1C, X1E, P1P, P1S, P2S, A1</li><li>Color/Finish: Various multi-color holographic patterns, black PEI smooth surface</li><li>Included: 1x Double-sided 3D Printer Build Plate</li></ul>",
+    "listing_title": "X1C P1P P1S P2S A1 X1 3D Printer Build Plate 257x257mm / 10.1x10.1in Steel",
+    "local_calendar_date": "2026-07-29",
+    "mode": "ebay_api",
+    "product_id": "3256807272675445",
+    "run_id": "20260729T114451-product-3256807272675445",
+    "selected_variants": [
+      {
+        "delivered_total": "10.05",
+        "expected_ebay_price": "39.00",
+        "id": "default",
+        "options": {},
+        "quantity": 1,
+        "sku": "ALI-3256807272675445-default-37a8eec1",
+        "visible_item_price": "10.05"
+      }
+    ],
+    "source_images": [
+      "https://ae-pic-a1.aliexpress-media.com/kf/S9c4a20e3f7f04725acc2fcd8483f5a41D.jpg",
+      "https://ae-pic-a1.aliexpress-media.com/kf/S5c2911f1ce8c4e2b92c095cf6d0442cbU.jpg",
+      "https://ae-pic-a1.aliexpress-media.com/kf/Sc8c747b8de194e588b1b3751d02b80efA.jpg",
+      "https://ae-pic-a1.aliexpress-media.com/kf/Scb815f0ac23842208a44da23020a8a0aQ.jpg",
+      "https://ae-pic-a1.aliexpress-media.com/kf/S35a0561007cf4b3f8b4b58a9092471f8U.jpg",
+      "https://ae-pic-a1.aliexpress-media.com/kf/Sc0b947bb26e04935b8ab02ca471ab53cN.jpg"
+    ],
+    "source_title": "X1C P1P P1S P2S A1 X1 Build Plate for Bambu Lab A1 Smooth PEI Sheet PEO PET for Bambulab A1 P1P 3D Printer Heatbed Build Plate",
+    "verified_brand": "Unbranded"
+  },
+  "spare_images": [],
+  "status": "draft",
+  "updated_at": "2026-07-29T06:16:39Z",
+  "validation": {
+    "category_id": "183066",
+    "normalized_aspects": {
+      "Brand": [
+        "Unbranded"
+      ],
+      "Color": [
+        "Multi-color Holographic and Black PEI"
+      ],
+      "Compatible Brand": [
+        "Bambu Lab"
+      ],
+      "Custom Bundle": [
+        "No"
+      ],
+      "Features": [
+        "Double-sided, Flexible, Easy Removal"
+      ],
+      "MPN": [
+        "N/A"
+      ],
+      "Material": [
+        "Spring Steel"
+      ],
+      "Model": [
+        "X1C P1P P1S P2S A1 X1"
+      ],
+      "Modified Item": [
+        "No"
+      ],
+      "Number of Items": [
+        "1"
+      ],
+      "Type": [
+        "Build Plate"
+      ]
+    },
+    "warnings": []
+  }
+}

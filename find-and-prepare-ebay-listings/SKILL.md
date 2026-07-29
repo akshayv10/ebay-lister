@@ -121,7 +121,8 @@ prepared artifact.
 The scheduled GitHub Actions run (`scripts/daily_run.py`) now follows the same
 prepare-then-approve boundary as this skill instead of publishing unattended.
 
-`daily_run.py --draft` sources two products, applies variant and AI enrichment, validates
+`daily_run.py --draft` sources two products (`--count 1`, or the `PRODUCTS_PER_RUN`
+variable, asks for a single one), applies variant and AI enrichment, validates
 each against eBay **read-only** (`ebay_listing.validate_for_draft`: Taxonomy category and
 required item specifics only), and writes a draft to `state/drafts/<draft-id>.json` with
 `status: draft`, `published: false`, `publish_allowed: false`. It creates nothing on eBay

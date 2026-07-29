@@ -1,0 +1,133 @@
+{
+  "created_at": "2026-07-28T11:23:50Z",
+  "draft_id": "20260728T165213-3256810444356180",
+  "ebay_url": "https://www.ebay.com/itm/158127607287",
+  "listing_id": "158127607287",
+  "notes": [],
+  "product_id": "3256810444356180",
+  "publish_allowed": false,
+  "publish_error": "",
+  "published": true,
+  "run_stamp": "20260728T165213",
+  "source": {
+    "aliexpress_orders": 955.0,
+    "aliexpress_rating": 4.695,
+    "aliexpress_url": "https://www.aliexpress.us/item/3256810444356180.html",
+    "appeal_reason": "top seller in niche (955 orders)",
+    "appeal_score": 955.0,
+    "aspects": {
+      "Brand": [
+        "Unbranded"
+      ],
+      "Color": [
+        "Matte Black"
+      ],
+      "Compatible Brand": [
+        "Universal"
+      ],
+      "Custom Bundle": [
+        "No"
+      ],
+      "Features": [
+        "IPX6 Waterproof",
+        "LED Display",
+        "USB-C Rechargeable",
+        "V-Shaped Blade"
+      ],
+      "MPN": [
+        "N/A"
+      ],
+      "Material": [
+        "ABS Plastic",
+        "Stainless Steel"
+      ],
+      "Model": [
+        "N/A"
+      ],
+      "Modified Item": [
+        "No"
+      ],
+      "Number of Items": [
+        "9"
+      ],
+      "Type": [
+        "Body Hair Trimmer"
+      ]
+    },
+    "assigned_niche": "Beauty & Self Care",
+    "category_id_override": "67408",
+    "category_query": "MAXGROOM Manscape Body Hair Trimmer 4 in 1 IPX6 Waterproof Pubic & Groin Shave",
+    "condition": "NEW",
+    "functional_fingerprint": "maxgroom manscape body hair trimmer 4 in 1 ipx6 waterproof pubic groin shave electric grooming kit for men nose beard trimmer",
+    "inventory_item_group_key": "",
+    "listing_description": "<p>Experience precise and comfortable grooming with the MAXGROOM 4-in-1 Body Hair Trimmer. Perfect for pubic, groin, nose, and beard hair, its unique V-shaped blade reaches hard-to-access areas with ease and safety.</p><p>This versatile grooming kit addresses the challenge of maintaining personal hygiene and style with one device. Designed for multiple uses, it provides tailored trimming for sensitive zones, delivering confidence and convenience.</p><h3>Key Features</h3><ul><li><strong>Unique V-Shaped Blade:</strong> Facilitates precise trimming in delicate areas like groin, balls, armpits.</li><li><strong>Intelligent LED Display:</strong> Displays real-time battery power for uninterrupted grooming sessions.</li><li><strong>Long Battery Life:</strong> Rechargeable via USB-C, runs up to 30 days on a single charge, ideal for travel.</li><li><strong>Waterproof IPX6:</strong> Suitable for wet/dry use, easy cleaning with water for hygienic maintenance.</li><li><strong>Multifunctional Heads:</strong> Includes nose, beard, body hair trimmer heads and comb attachments for versatile grooming.</li></ul><hr><h3>Specifications</h3><ul><li>Color: Matte Black with Orange Accents</li><li>Material: ABS Plastic and Stainless Steel Blades</li><li>Dimensions (Main Unit): ~16.5cm / 6.5in length</li><li>Weight: Approx. 140g / 4.9oz</li><li>Battery Life: Up to 30 days per charge</li><li>Charging: USB-C Cable Included</li><li>Water Resistance: IPX6 Waterproof Rating</li><li>Number of Items: 1 Main Trimmer, 6 Attachments, 1 Comb, 1 USB-C Cable, 1 Cleaning Brush, 1 Carry Pouch</li></ul>",
+    "listing_title": "MAXGROOM 4-in-1 Men's Body Hair Trimmer with V-Shaped Blade, 30-Day Battery,",
+    "local_calendar_date": "2026-07-28",
+    "mode": "ebay_api",
+    "product_id": "3256810444356180",
+    "run_id": "20260728T165213-product-3256810444356180",
+    "selected_variants": [
+      {
+        "delivered_total": "22.98",
+        "expected_ebay_price": "89.00",
+        "id": "default",
+        "options": {},
+        "quantity": 1,
+        "sku": "ALI-3256810444356180-default-37a8eec1",
+        "visible_item_price": "22.98"
+      }
+    ],
+    "source_images": [
+      "https://ae-pic-a1.aliexpress-media.com/kf/Scdfd4a707bef40b79806e78df7d5a783k.jpg",
+      "https://ae-pic-a1.aliexpress-media.com/kf/Sda6b6c6e7dfd426ea23ec1a4f1d15e97w.jpg",
+      "https://ae-pic-a1.aliexpress-media.com/kf/S5a3aab1469fd489d8e0cbb18de3b7c8fm.jpg",
+      "https://ae-pic-a1.aliexpress-media.com/kf/S6f41157ceee547fea143a22acb55eec3m.jpg",
+      "https://ae-pic-a1.aliexpress-media.com/kf/S8b4bae66c953475a8a2b4187f42dc84ax.jpg",
+      "https://ae-pic-a1.aliexpress-media.com/kf/S992c1ad7c93c4f14a0329e7ba4bea44d6.jpg"
+    ],
+    "source_title": "MAXGROOM Manscape Body Hair Trimmer 4 in 1 IPX6 Waterproof Pubic & Groin Shave Electric Grooming Kit for Men Nose Beard Trimmer",
+    "verified_brand": "Unbranded"
+  },
+  "spare_images": [],
+  "status": "live",
+  "updated_at": "2026-07-28T11:26:27Z",
+  "validation": {
+    "category_id": "67408",
+    "normalized_aspects": {
+      "Brand": [
+        "Unbranded"
+      ],
+      "Color": [
+        "Matte Black"
+      ],
+      "Compatible Brand": [
+        "Universal"
+      ],
+      "Custom Bundle": [
+        "No"
+      ],
+      "Features": [
+        "IPX6 Waterproof, LED Display, USB-C Rechargeable, V-Shaped Blade"
+      ],
+      "MPN": [
+        "N/A"
+      ],
+      "Material": [
+        "ABS Plastic, Stainless Steel"
+      ],
+      "Model": [
+        "N/A"
+      ],
+      "Modified Item": [
+        "No"
+      ],
+      "Number of Items": [
+        "9"
+      ],
+      "Type": [
+        "Body Hair Trimmer"
+      ]
+    },
+    "warnings": []
+  }
+}

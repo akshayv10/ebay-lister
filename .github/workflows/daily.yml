@@ -1,21 +1,26 @@
 name: Daily eBay auto-lister
 
-# AUTOMATION IS LIVE — runs daily at 09:00 IST (03:30 UTC).
+# AUTOMATION IS PAUSED — this workflow runs only when you press the button.
 #
-# DRAFT-FIRST IS THE DEFAULT. A scheduled run sources two products, enriches and
+# DRAFT-FIRST IS THE DEFAULT. A run sources two products (repository variable
+# PRODUCTS_PER_RUN changes that, or choose 1 in the Run workflow dialog), enriches and
 # validates them, and saves them as DRAFTS for review — it creates nothing on eBay.
-# You review them in the workbook's "Drafts" tab, tick Publish? = YES on the ones you
-# want, and run the "Publish approved eBay drafts" workflow.
+# The Drafts tab shows you what was prepared; when you want them live, run the
+# "Publish approved eBay drafts" workflow and it lists the newest batch. There is no
+# approval tick any more — pressing the button is the approval.
 #
-# To go back to hands-off automatic listing, set the repository variable
-# LISTING_MODE=auto. Scheduled runs then publish immediately again, exactly as before.
-# Manual dispatch ignores LISTING_MODE and uses the mode you pick.
+# LISTING_MODE=auto makes a *scheduled* run publish immediately instead of drafting.
+# With the schedule off it has no effect at all. Manual dispatch has always ignored it
+# and uses the mode you pick.
 #
-# To pause entirely, comment out the `schedule` block below (or disable the workflow in
-# the Actions tab).
+# THE DAILY SCHEDULE IS OFF. Nothing runs on its own: this workflow now only starts when
+# you press the button (Actions → Daily eBay auto-lister → Run workflow).
+#
+# To turn the daily run back on, uncomment the two `schedule` lines below. That restores
+# 09:00 IST exactly as before; everything downstream still understands a scheduled run.
 on:
-  schedule:
-    - cron: "30 3 * * *"  # 09:00 IST daily (IST is UTC+5:30, no DST); may start a few minutes late
+  # schedule:
+  #   - cron: "30 3 * * *"  # 09:00 IST daily (IST is UTC+5:30, no DST); may start a few minutes late
   workflow_dispatch:
     inputs:
       mode:
@@ -28,6 +33,13 @@ on:
           - sheet-sync-only
           - email-test
         default: draft
+      products:
+        description: "How many products to source this run"
+        type: choice
+        options:
+          - "2"
+          - "1"
+        default: "2"
 
 permissions:
   contents: write   # allows committing updated history back to the repo
@@ -50,6 +62,9 @@ jobs:
       RUNS_DIR: ebay-listing-runs
       DRAFT_DIR: state/drafts
       RUN_TZ: ${{ vars.RUN_TZ || 'Asia/Kolkata' }}
+      # How many products a run produces. Manual dispatch wins; a scheduled run uses the
+      # repository variable PRODUCTS_PER_RUN; absent both, two products as before.
+      PRODUCTS_PER_RUN: ${{ inputs.products || vars.PRODUCTS_PER_RUN || '2' }}
       ALI_DEBUG: ${{ vars.ALI_DEBUG || '0' }}
       SHEETS_SPREADSHEET_ID: 10GgtsN_cxhHBvbEYa4vUXBUbC-LqeElkzmRiL3TT0Uk
       SHEETS_TAB_NAME: Auto Lister
@@ -100,6 +115,7 @@ jobs:
           LIVE: ${{ (inputs.mode == 'full' || (github.event_name == 'schedule' && vars.LISTING_MODE == 'auto')) && 'yes' || 'no' }}
           DRAFT: ${{ (inputs.mode == 'draft' || (github.event_name == 'schedule' && vars.LISTING_MODE != 'auto')) && 'yes' || 'no' }}
         run: |
+          echo "Targeting $PRODUCTS_PER_RUN product(s) this run."
           if [ "$LIVE" = "yes" ]; then
             echo "::warning::LIVE MODE — this run will publish real eBay listings."
             python find-and-prepare-ebay-listings/scripts/daily_run.py --live

@@ -1,0 +1,77 @@
+{
+  "created_at": "2026-07-28T11:23:28Z",
+  "draft_id": "20260728T165213-3256805843914822",
+  "ebay_url": "",
+  "listing_id": "",
+  "notes": [],
+  "product_id": "3256805843914822",
+  "publish_allowed": false,
+  "publish_error": "",
+  "published": false,
+  "run_stamp": "20260728T165213",
+  "source": {
+    "aliexpress_orders": 1083.0,
+    "aliexpress_rating": 4.82,
+    "aliexpress_url": "https://www.aliexpress.us/item/3256805843914822.html",
+    "appeal_reason": "top seller in niche (1083 orders)",
+    "appeal_score": 1083.0,
+    "aspects": {
+      "Brand": [
+        "Unbranded"
+      ],
+      "MPN": [
+        "N/A"
+      ]
+    },
+    "assigned_niche": "Beauty & Self Care",
+    "category_query": "Jessup Makeup Brushes 14pc Makeup Brush set Synthetic Foundation Brush Powder",
+    "condition": "NEW",
+    "functional_fingerprint": "jessup makeup brushes 14pc makeup brush set synthetic foundation brush powder contour eyeshadow liner blending highlight t329",
+    "inventory_item_group_key": "",
+    "listing_description": "<p>Achieve flawless makeup application with the Jessup 14-piece brush set designed for foundation, powder, contour, eyeshadow, liner, blending, and highlighting. Soft synthetic fibres ensure smooth, smudge-free results for every look.</p><p>This comprehensive brush set solves the need for versatile, high-quality tools that cover every aspect of makeup application from base to detail. Whether applying foundation or precision eyeshadow, the brushes provide professional results with ease and durability.</p><h3>Key Features</h3><ul><li><strong>Synthetic Fibres:</strong> Soft yet resilient hair for smudge-free blending and long-lasting use.</li><li><strong>Versatile 14pc Set:</strong> Includes 5 face brushes and 9 precision brushes for foundation, contour, powder, eyeshadow, liner, and highlighting.</li><li><strong>Ergonomic Handles:</strong> 17cm / 6.7in handles offer a comfortable grip for precise control during application.</li><li><strong>Multipurpose Use:</strong> Suitable for both liquid and loose makeup products ensuring flawless coverage and definition.</li><li><strong>Durable Construction:</strong> High-quality ABS and synthetic materials for resilience and easy cleaning.</li></ul><hr><h3>Specifications</h3><ul><li>Number of Items: 14</li><li>Type: Makeup Brush Set</li><li>Material: Synthetic Hair, ABS Plastic Handles</li><li>Color: White Handle, Brown Bristles</li><li>Model: T329</li><li>Features: Foundation Brush, Powder Brush, Contour Brush, Eyeshadow Brush</li><li>MPN: N/A</li><li>Brand: Unbranded</li><li>Custom Bundle: No</li><li>Modified Item: No</li><li>Dimensions: Approx. 17cm / 6.7 inches length each brush</li><li>Weight: Approx. 120g / 4.2oz total set</li></ul>",
+    "listing_title": "Jessup 14pc Makeup Brush Set Synthetic Hair Foundation Powder Contour 17cm/6.7in",
+    "local_calendar_date": "2026-07-28",
+    "mode": "ebay_api",
+    "product_id": "3256805843914822",
+    "run_id": "20260728T165213-product-3256805843914822",
+    "selected_variants": [
+      {
+        "delivered_total": "22.22",
+        "expected_ebay_price": "85.00",
+        "id": "default",
+        "options": {},
+        "quantity": 1,
+        "sku": "ALI-3256805843914822-default-37a8eec1",
+        "visible_item_price": "22.22"
+      }
+    ],
+    "source_images": [
+      "https://ae-pic-a1.aliexpress-media.com/kf/Sa076bf3f78bf4d7db21b9cb0d8b993b8Y.jpg",
+      "https://ae-pic-a1.aliexpress-media.com/kf/Ua920eb76416d4bcc8455622bd53bc8ca4.jpg",
+      "https://ae-pic-a1.aliexpress-media.com/kf/Ue5ff48a568c1470d9f0326adab70cb7dQ.jpg",
+      "https://ae-pic-a1.aliexpress-media.com/kf/U8acebd02737940fe8ebee156a3b77404h.jpg",
+      "https://ae-pic-a1.aliexpress-media.com/kf/Ube38697f55bd4b81bc8f32071b0c2df0F.jpg",
+      "https://ae-pic-a1.aliexpress-media.com/kf/U18451872a57d4d399dade577d3c78364w.jpg"
+    ],
+    "source_title": "Jessup Makeup Brushes 14pc Makeup Brush set Synthetic Foundation Brush Powder Contour Eyeshadow Liner Blending Highlight T329",
+    "verified_brand": "Unbranded"
+  },
+  "spare_images": [],
+  "status": "draft",
+  "updated_at": "2026-07-28T11:23:28Z",
+  "validation": {
+    "category_id": "82597",
+    "normalized_aspects": {
+      "Brand": [
+        "Unbranded"
+      ],
+      "MPN": [
+        "N/A"
+      ],
+      "Type": [
+        "Blending Brush"
+      ]
+    },
+    "warnings": []
+  }
+}

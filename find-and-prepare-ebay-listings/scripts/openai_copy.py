@@ -12,7 +12,7 @@ import json
 import os
 import re
 import urllib.request
-from typing import Any
+from typing import Any, Iterable
 
 # Ported verbatim from `ebay listing Chrome extension claude/openai.js`
 # (exactEbayPromptTemplate) — the user's own eBay copywriter prompt.
@@ -62,6 +62,23 @@ ITEM_SPECIFICS_RULES = (
     '- Brand must be "Unbranded"; MPN must be "N/A".\n'
 )
 
+# Every listing goes out with Brand = "Unbranded" (see ITEM_SPECIFICS_RULES), so a brand
+# name in the title contradicts the item specifics and is exactly the mismatch eBay's
+# counterfeit/VeRO checks act on. Sourcing already rejects established global brands, but
+# lesser-known AliExpress brands are allowed through deliberately and their names sit in
+# the supplier title the model is shown — so it copies them across unless told not to.
+NO_BRAND_RULES = (
+    "\n\nBRAND NAMES — CRITICAL:\n"
+    "- The title must contain NO brand, manufacturer, seller, store or trademark name, "
+    "even if one appears in the supplier title or on the product in the images.\n"
+    "- Describe the product generically instead: what it is, what it does, its key spec.\n"
+    "- The same applies to the description.\n"
+    '- Compatibility is the one exception, and only in the description: "compatible with '
+    '<brand>" is allowed where it is factually true; never in the title.\n'
+    '- Report any brand you saw in the "brand" field (empty string if none). It is used '
+    "to check your title, not to publish — putting it in the title will not help.\n"
+)
+
 SYSTEM = "You generate accurate, policy-conscious ecommerce listing data as strict JSON."
 
 # eBay renders the description field as HTML, so Markdown shows up as literal "**" and
@@ -82,11 +99,13 @@ HTML_RULES = (
 SCHEMA = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["title", "description", "itemSpecifics"],
+    "required": ["title", "description", "itemSpecifics", "brand"],
     "properties": {
         "title": {"type": "string"},
         "description": {"type": "string"},
         "itemSpecifics": {"type": "object", "additionalProperties": {"type": "string"}},
+        # Reported, never published: the scrubber below uses it to verify the title.
+        "brand": {"type": "string"},
     },
 }
 
@@ -328,6 +347,50 @@ def rank_candidates(
     return {"ranked": ranked[:top_n], "usage": _usage(payload), "model": model}
 
 
+# Words that read as a brand in a supplier title but are ordinary vocabulary in an eBay
+# title. Stripping these would damage a title without removing any trademark.
+_BRAND_STOPWORDS = {
+    "unbranded", "generic", "none", "n/a", "na", "no brand", "oem", "brand", "other",
+    "universal", "original", "new", "unknown", "diy",
+}
+_TITLE_JUNK = re.compile(r"^[\s\-–—,:;/|&+.]+|[\s\-–—,:;/|&+]+$")
+
+
+def _known_brands() -> set[str]:
+    """The sourcing brand blocklist, reused so the scrubber catches a global brand the
+    model slipped in even when the caller reports no brand of its own."""
+    try:
+        import ali_api
+
+        return {str(brand).casefold() for brand in ali_api.BRAND_EXCLUSIONS}
+    except Exception:  # noqa: BLE001 - the scrubber must work standalone
+        return set()
+
+
+def strip_brands(title: str, brands: Iterable[str] = ()) -> str:
+    """Remove brand names from a title, whole-word and case-insensitively.
+
+    The prompt tells the model to leave brands out; this is the part that actually
+    guarantees it. Runs over the model's own reported brand plus the sourcing blocklist,
+    then tidies the punctuation and doubled spaces the removal leaves behind.
+    """
+    cleaned = title or ""
+    candidates = {str(brand).strip() for brand in brands}
+    candidates |= _known_brands()
+    for brand in sorted(candidates, key=len, reverse=True):  # longest first: "under armour" before "armour"
+        if len(brand) < 2 or brand.casefold() in _BRAND_STOPWORDS:
+            continue
+        # \b does not fire next to "+" or "&" (e.g. "Brand+Case"), so bound on non-word
+        # characters as well as string edges.
+        pattern = re.compile(rf"(?<![\w]){re.escape(brand)}(?![\w])", re.IGNORECASE)
+        cleaned = pattern.sub(" ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    # Removal can leave stranded separators mid-title ("Case - - Cover") as well as at
+    # the edges.
+    cleaned = re.sub(r"(?:[\-–—,:;/|&+]\s*){2,}", "- ", cleaned)
+    return _TITLE_JUNK.sub("", cleaned).strip()
+
+
 def _extract_text(payload: dict[str, Any]) -> str:
     if isinstance(payload.get("output_text"), str) and payload["output_text"].strip():
         return payload["output_text"]
@@ -355,6 +418,7 @@ def generate_listing(
     prompt = (
         EXACT_EBAY_PROMPT
         + ITEM_SPECIFICS_RULES
+        + NO_BRAND_RULES
         + HTML_RULES
         + "\n\nSource product data:\n"
         + json.dumps(product, ensure_ascii=False)
@@ -384,6 +448,15 @@ def generate_listing(
     description = to_html(str(listing.get("description", "")).strip())
     if not title or not description:
         raise CopyError("OpenAI listing missing title or description")
+    # The prompt asks for a brand-free title; this enforces it. Anything the model
+    # reported as the product's brand comes out of the title, along with any global brand
+    # from the sourcing blocklist.
+    detected_brand = str(listing.get("brand", "")).strip()
+    title = strip_brands(title, [detected_brand] if detected_brand else [])
+    # A title that is mostly brand leaves nothing to search on; fall back to the
+    # deterministic template rather than listing a stub.
+    if len(title) < 15:
+        raise CopyError("OpenAI title was too short once brand names were removed")
     specifics_raw = listing.get("itemSpecifics", {})
     item_specifics = {
         str(k).strip(): str(v).strip()
@@ -394,6 +467,7 @@ def generate_listing(
         "title": title,
         "description": description,
         "item_specifics": item_specifics,
+        "detected_brand": detected_brand,
         "usage": _usage(payload),
         "model": model,
     }

@@ -144,7 +144,7 @@ def compose(result: dict[str, Any]) -> tuple[str, str, str]:
     html_body = (
         f"<h2>{_status_prefix(status)} Daily eBay auto-lister — {html.escape(date)}</h2>"
         f"<p>Niche: <b>{html.escape(niche)}</b> · Status: <b>{html.escape(status)}</b> "
-        f"({listed} of 2 listed)</p>"
+        f"({listed} of {expected} listed)</p>"
         "<table border='1' cellpadding='6' cellspacing='0'>"
         "<tr><th>#</th><th>Title</th><th>Price</th><th>eBay Price</th><th>Source</th><th>eBay listing</th></tr>"
         + "".join(rows)
