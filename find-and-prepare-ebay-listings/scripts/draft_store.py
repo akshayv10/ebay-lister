@@ -42,9 +42,14 @@ STATUS_BLOCKED = "blocked"
 STATUS_PUBLISH_FAILED = "publish_failed"
 STATUS_REJECTED = "rejected"
 
-# A reviewer may retry a draft that was blocked or that eBay refused; "live" is terminal
-# so an approved row can never publish the same product twice.
+# A draft that was blocked or that eBay refused may be retried; "live" is terminal so the
+# same product can never be published twice.
 PUBLISHABLE_STATUSES = {STATUS_DRAFT, STATUS_BLOCKED, STATUS_PUBLISH_FAILED}
+
+# After this many failed publishes a draft stops being picked up automatically. Some
+# products eBay simply will not accept — a branded medical device listed as Unbranded,
+# say — and without this they would be retried, and fail, on every single button press.
+MAX_PUBLISH_ATTEMPTS = int(os.environ.get("DRAFT_MAX_PUBLISH_ATTEMPTS", "2"))
 
 _ID_SAFE = re.compile(r"[^A-Za-z0-9._-]+")
 
@@ -110,6 +115,7 @@ def new_draft(
         "listing_id": "",
         "ebay_url": "",
         "publish_error": "",
+        "publish_attempts": 0,
     }
 
 
@@ -147,7 +153,55 @@ def pending(directory: Path | None = None) -> list[dict[str, Any]]:
 
 
 def is_publishable(draft: dict[str, Any]) -> bool:
+    """True if this draft may still be listed at all — including by an explicit retry."""
     return draft.get("status") in PUBLISHABLE_STATUSES and not draft.get("published")
+
+
+def attempts(draft: dict[str, Any]) -> int:
+    try:
+        return int(draft.get("publish_attempts", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def is_parked(draft: dict[str, Any]) -> bool:
+    """True once eBay has refused this draft enough times to stop auto-retrying it."""
+    return is_publishable(draft) and attempts(draft) >= MAX_PUBLISH_ATTEMPTS
+
+
+def auto_selectable(draft: dict[str, Any]) -> bool:
+    """Publishable *and* not parked — what a plain button press should pick up."""
+    return is_publishable(draft) and not is_parked(draft)
+
+
+def batches(directory: Path | None = None) -> dict[str, list[dict[str, Any]]]:
+    """Pending drafts grouped by the run that produced them, newest run first."""
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for draft in pending(directory):
+        grouped.setdefault(str(draft.get("run_stamp", "")), []).append(draft)
+    return dict(sorted(grouped.items(), key=lambda item: item[0], reverse=True))
+
+
+def latest_batch(directory: Path | None = None) -> tuple[str, list[dict[str, Any]]]:
+    """The newest run's still-publishable drafts, skipping parked ones.
+
+    Returns ("", []) when every recent draft is live or parked. Older runs are left
+    alone deliberately: the button publishes today's batch, and the backlog is
+    reported rather than swept up silently.
+    """
+    for run_stamp, drafts in batches(directory).items():
+        selectable = [draft for draft in drafts if auto_selectable(draft)]
+        if selectable:
+            return run_stamp, selectable
+    return "", []
+
+
+def backlog(directory: Path | None = None, exclude_run_stamp: str = "") -> list[dict[str, Any]]:
+    """Publishable drafts outside the batch being published — what to report."""
+    return [
+        draft for draft in pending(directory)
+        if str(draft.get("run_stamp", "")) != exclude_run_stamp
+    ]
 
 
 def history_views(directory: Path | None = None) -> list[dict[str, Any]]:

@@ -93,6 +93,21 @@ def compose(result: dict[str, Any]) -> tuple[str, str, str]:
         text_lines.append("")
     if result.get("error"):
         text_lines += ["Error:", str(result["error"]), ""]
+    # Publishing one batch at a time means a backlog can build up quietly. Report it here
+    # too, so the result of pressing the button says what is still waiting.
+    pending = result.get("pending") or []
+    parked = result.get("parked") or []
+    if pending:
+        text_lines += [f"{len(pending)} draft(s) still pending:"]
+        text_lines += [f"  - {p.get('run_stamp', '')}  {p.get('title', '')[:60]}" for p in pending[:10]]
+        text_lines += ["  Run the publish workflow again for the next batch.", ""]
+    if parked:
+        text_lines += [f"{len(parked)} draft(s) parked after repeated eBay refusals:"]
+        text_lines += [
+            f"  - {p.get('title', '')[:50]} ({p.get('attempts', 0)} attempts) — {str(p.get('error', ''))[:90]}"
+            for p in parked[:10]
+        ]
+        text_lines.append("")
     notes = result.get("notes") or []
     if notes:
         text_lines += ["Notes:"] + [f"  - {n}" for n in notes[:20]]
@@ -178,12 +193,20 @@ def compose_drafts(result: dict[str, Any]) -> tuple[str, str, str]:
             lines.append(f"  ! {warning}")
         lines.append("")
     lines += [
-        "To publish:",
-        f"  1. Open the Drafts tab and edit anything you want: {sheet_url}",
-        "  2. Set Publish? to YES on the rows you approve.",
-        "  3. Run the 'Publish drafts' workflow in GitHub Actions.",
+        "To publish, whenever you are ready:",
+        "  Actions -> 'Publish approved eBay drafts' -> Run workflow.",
+        f"  That lists this batch. Status board: {sheet_url}",
         "",
     ]
+    # Older drafts are deliberately not swept up by that button, so say they are there.
+    older = result.get("pending_older") or []
+    if older:
+        lines.append(f"{len(older)} older draft(s) are still waiting:")
+        for item in older[:10]:
+            created = str(item.get("created_at", ""))[:10]
+            parked = " [parked — eBay refused it repeatedly]" if item.get("parked") else ""
+            lines.append(f"  - {created}  {item.get('title', '')[:60]}{parked}")
+        lines += ["  Run the publish workflow with scope 'all' to clear them.", ""]
     sheet = result.get("draft_sheet") or {}
     if sheet.get("error"):
         lines += [f"Drafts sheet error: {sheet['error']}", ""]

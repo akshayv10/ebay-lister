@@ -5,8 +5,9 @@ name: Daily eBay auto-lister
 # DRAFT-FIRST IS THE DEFAULT. A run sources two products (repository variable
 # PRODUCTS_PER_RUN changes that, or choose 1 in the Run workflow dialog), enriches and
 # validates them, and saves them as DRAFTS for review — it creates nothing on eBay.
-# You review them in the workbook's "Drafts" tab, tick Publish? = YES on the ones you
-# want, and run the "Publish approved eBay drafts" workflow.
+# The Drafts tab shows you what was prepared; when you want them live, run the
+# "Publish approved eBay drafts" workflow and it lists the newest batch. There is no
+# approval tick any more — pressing the button is the approval.
 #
 # LISTING_MODE=auto makes a *scheduled* run publish immediately instead of drafting.
 # With the schedule off it has no effect at all. Manual dispatch has always ignored it

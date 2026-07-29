@@ -1,28 +1,35 @@
 name: Publish approved eBay drafts
 run-name: Publish drafts${{ inputs.draft_id && format(' / {0}', inputs.draft_id) || '' }}
 
-# Second half of the review-before-publish flow.
+# The button. Run this whenever you are ready and the most recent day's drafts go live.
 #
-# The daily workflow saves drafts under state/drafts/ and writes one row per draft into
-# the workbook's "Drafts" tab. Review them there, edit anything you like (title,
-# description, item specifics, images, variants, price override), then tick
-# Publish? = YES on the rows you approve and run this workflow.
+# The daily workflow prepares two drafts a day and publishes nothing. Running this
+# workflow publishes the newest batch and reports any older drafts still waiting, so one
+# press is a predictable two listings rather than a week's accumulation. Edit the
+# listings on eBay afterwards.
 #
-# Publishing is opt-in: mode "publish" lists for real; "dry-run" (the default) resolves
-# the approved drafts and validates your edits without touching eBay.
+# Nothing is read from the Drafts tab — it is a status board. Selection comes from the
+# draft records committed under state/drafts/.
 
 on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "publish = list for real; dry-run = validate only"
+        description: "publish = list for real; dry-run = validate without listing"
         type: choice
         options:
-          - dry-run
           - publish
-        default: dry-run
+          - dry-run
+        default: publish
+      scope:
+        description: "latest = the newest batch (normal); all = clear the whole backlog"
+        type: choice
+        options:
+          - latest
+          - all
+        default: latest
       draft_id:
-        description: "Optional: publish only this draft ID (must still be ticked in the sheet)"
+        description: "Optional: publish only this draft ID, even if it has been parked"
         type: string
         required: false
 
@@ -82,17 +89,19 @@ jobs:
 
       # No OPENAI_API_KEY above on purpose: publishing runs with enrichment disabled, so
       # the AI can never overwrite the copy you reviewed.
-      - name: Publish approved drafts
+      - name: Publish drafts
         env:
           DRAFT_ID: ${{ inputs.draft_id }}
+          SCOPE: ${{ inputs.scope }}
         run: |
           ARGS=""
           if [ -n "$DRAFT_ID" ]; then ARGS="--draft-id $DRAFT_ID"; fi
+          if [ "$SCOPE" = "all" ]; then ARGS="$ARGS --all"; fi
           if [ "${{ inputs.mode }}" = "publish" ]; then
-            echo "::warning::LIVE MODE — this run will publish the approved drafts to eBay."
+            echo "::warning::LIVE MODE — this run publishes drafts to eBay."
             python find-and-prepare-ebay-listings/scripts/publish_drafts.py --live $ARGS
           else
-            echo "DRY RUN — resolving approved drafts and validating edits; nothing will be listed."
+            echo "DRY RUN — resolving and validating drafts; nothing will be listed."
             python find-and-prepare-ebay-listings/scripts/publish_drafts.py $ARGS
           fi
 

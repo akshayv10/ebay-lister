@@ -130,13 +130,20 @@ required item specifics only), and writes a draft to `state/drafts/<draft-id>.js
 `Drafts` tab and rendered into an HTML review page that is emailed and uploaded as an
 artifact.
 
-`scripts/publish_drafts.py --live` is the separate approval step. It publishes only drafts
-the user ticked `Publish? = YES` in the sheet, layering their edits onto the stored draft,
-re-checking the AliExpress cost first, and calling `ebay_listing.list_one(..., enrich=False)`
-so reviewed copy is never overwritten by the AI.
+`scripts/publish_drafts.py --live` is the separate approval step, triggered by the user
+running the publish workflow. It publishes **the newest run's batch only**, selected from
+the draft records under `state/drafts/` — never from the sheet, which is a read-only
+status board. Older pending drafts are reported rather than swept up; `--all` clears the
+backlog and `--run-stamp` targets one batch.
+
+Before listing it re-checks the AliExpress cost (drafts may be days old) and calls
+`ebay_listing.list_one(..., enrich=False)` so the copy that goes live is the copy that was
+drafted. A draft eBay refuses is retried once more and then **parked** —
+`draft_store.MAX_PUBLISH_ATTEMPTS` — so a product eBay will never accept stops
+reappearing. `--draft-id` still forces a parked draft.
 
 Do not infer Seller Hub draft availability here either. There is no public eBay API that
-creates a Seller Hub draft, so the sheet and the draft JSON are the draft.
+creates a Seller Hub draft, so the draft JSON is the draft.
 
 `daily_run.py --live` retains the original publish-immediately behaviour; the repository
 variable `LISTING_MODE=auto` restores it for scheduled runs.

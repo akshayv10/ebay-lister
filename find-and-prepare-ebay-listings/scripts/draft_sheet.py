@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
-"""The Drafts tab: the human review-and-edit surface for unpublished listings.
+"""The Drafts tab: a read-only status board for prepared, unpublished listings.
 
-One row per draft. The pipeline writes the row; you edit the editable columns and tick
-``Publish?`` = YES on the rows you approve. ``publish_drafts.py`` then reads the ticked
-rows, layers your edits onto the stored draft, and lists them.
+One row per draft, showing which batch it belongs to, what it will cost and list at, and
+— once published — its live eBay link or the reason it failed. Every cell is written by
+the pipeline and overwritten on each sync.
+
+Nothing here is read back. Publishing selects drafts from the records under state/drafts/,
+so editing a cell changes nothing and a Sheets outage cannot stop a publish. Adjust
+listings on eBay after they go live.
 
 There is deliberately no eBay-side draft: eBay has no public API that creates a Seller
 Hub draft (unpublished Inventory offers are invisible in Seller Hub, Trading AddItem
-publishes immediately, and Sell Listing API createItemDraft is a limited release), so
-this sheet *is* the draft.
-
-Editable columns: Title, Description, Category ID, Item Specifics, Images,
-Price Override USD, Variants, Publish?. Everything else is pipeline-owned and is
-overwritten on every sync.
+publishes immediately, and Sell Listing API createItemDraft is a limited release).
 
 Environment:
     SHEETS_SPREADSHEET_ID   same workbook as the Auto Lister tab
@@ -33,23 +32,23 @@ from sheet_sync import SheetsClient, SheetSyncError, column_letter
 DRAFT_TAB_NAME = os.environ.get("SHEETS_DRAFT_TAB_NAME", "Drafts")
 
 HEADERS = [
-    "Draft ID",          # 0  key, pipeline-owned
-    "Publish?",          # 1  EDITABLE — tick YES to approve
+    "Draft ID",          # 0  key
+    "Batch",             # 1  run stamp — the publish button targets the newest one
     "Status",            # 2
     "Created",           # 3
     "Niche",             # 4
     "AliExpress URL",    # 5
     "Thumbnail",         # 6
-    "Title",             # 7  EDITABLE
-    "Description",       # 8  EDITABLE
-    "Category ID",       # 9  EDITABLE
-    "Item Specifics",    # 10 EDITABLE
-    "Images",            # 11 EDITABLE
+    "Title",             # 7
+    "Description",       # 8
+    "Category ID",       # 9
+    "Item Specifics",    # 10
+    "Images",            # 11
     "Spare Images",      # 12 read-only suggestions
-    "Variants",          # 13 EDITABLE
+    "Variants",          # 13
     "Delivered Cost USD",  # 14
     "Suggested Price USD",  # 15
-    "Price Override USD",  # 16 EDITABLE
+    "Price Override USD",  # 16
     "Warnings",          # 17
     "eBay Listing ID",   # 18
     "eBay URL",          # 19
@@ -67,20 +66,6 @@ COLUMN_WIDTHS = [
     (11, 13, 320), (13, 14, 320), (14, 17, 130), (17, 18, 300), (18, 20, 200),
     (20, 21, 300), (21, 22, 170),
 ]
-
-# Columns a reviewer owns. Everything else is refreshed from the stored draft on sync.
-EDITABLE_COLUMNS = (
-    "Publish?", "Title", "Description", "Category ID", "Item Specifics",
-    "Images", "Variants", "Price Override USD",
-)
-
-_TRUE_VALUES = {"yes", "y", "true", "1", "x", "✓", "✔", "approved", "publish"}
-
-
-def is_approved(value: Any) -> bool:
-    """True for the many ways a person might tick a cell (YES, TRUE, a checkbox, ✓)."""
-    return str(value or "").strip().casefold() in _TRUE_VALUES
-
 
 def client(**kwargs: Any) -> SheetsClient:
     return SheetsClient(
@@ -191,14 +176,8 @@ def parse_variants(text: str, template: list[dict[str, Any]] | None = None) -> l
 
 # ------------------------------------------------------------------------------- rows
 
-def draft_row(draft: dict[str, Any], publish_cell: str | None = None) -> list[Any]:
-    """Flatten a stored draft into its sheet row.
-
-    ``publish_cell`` carries the reviewer's current tick through a refresh. A draft that
-    went live always comes back as "NO": the approval has been spent, and leaving a
-    standing YES next to a live listing is what would let it be published twice if the
-    draft record ever reverted.
-    """
+def draft_row(draft: dict[str, Any]) -> list[Any]:
+    """Flatten a stored draft into its sheet row. Purely informational."""
     source = draft.get("source", {}) or {}
     variants = source.get("selected_variants") or []
     first = variants[0] if variants else {}
@@ -206,10 +185,9 @@ def draft_row(draft: dict[str, Any], publish_cell: str | None = None) -> list[An
     thumbnail = f'=IMAGE("{images[0]}")' if images else ""
     warnings = list((draft.get("validation") or {}).get("warnings") or []) + list(draft.get("notes") or [])
     override = first.get("price_override", "")
-    approved = "NO" if draft.get("status") == "live" else str(publish_cell or "NO")
     return [
         draft.get("draft_id", ""),
-        approved,
+        draft.get("run_stamp", ""),
         draft.get("status", ""),
         draft.get("created_at", ""),
         source.get("assigned_niche", ""),
@@ -233,91 +211,20 @@ def draft_row(draft: dict[str, Any], publish_cell: str | None = None) -> list[An
     ]
 
 
-def row_edits(values: list[Any], draft: dict[str, Any]) -> dict[str, Any]:
-    """Extract the reviewer's edits from a sheet row.
-
-    Only non-empty editable cells are returned, so clearing a cell falls back to the
-    stored draft rather than wiping a required field.
-    """
-    def cell(name: str) -> str:
-        index = COL[name]
-        return str(values[index]).strip() if index < len(values) else ""
-
-    source = draft.get("source", {}) or {}
-    edits: dict[str, Any] = {}
-    if cell("Title"):
-        edits["listing_title"] = cell("Title")
-    if cell("Description"):
-        edits["listing_description"] = cell("Description")
-    if cell("Category ID"):
-        edits["category_id"] = cell("Category ID")
-    if cell("Item Specifics"):
-        parsed = parse_aspects(cell("Item Specifics"))
-        if parsed:
-            edits["aspects"] = parsed
-    if cell("Images"):
-        parsed_images = parse_images(cell("Images"))
-        if parsed_images:
-            edits["source_images"] = parsed_images
-    if cell("Variants"):
-        parsed_variants = parse_variants(cell("Variants"), source.get("selected_variants") or [])
-        if parsed_variants:
-            edits["selected_variants"] = parsed_variants
-    if cell("Price Override USD"):
-        edits["price_override"] = cell("Price Override USD")
-    return edits
-
-
-def apply_edits(draft: dict[str, Any], edits: dict[str, Any]) -> dict[str, Any]:
-    """Layer sheet edits onto a copy of the draft's source, returning the merged source."""
-    source = json.loads(json.dumps(draft.get("source", {}) or {}))
-    for key in ("listing_title", "listing_description", "aspects", "source_images"):
-        if key in edits:
-            source[key] = edits[key]
-    if "selected_variants" in edits:
-        source["selected_variants"] = edits["selected_variants"]
-    # A hand-set price applies to every variation; normalize_source rejects one at or
-    # below delivered cost.
-    if edits.get("price_override"):
-        for variant in source.get("selected_variants") or []:
-            variant["price_override"] = edits["price_override"]
-    # The category is re-resolved from category_query at prepare time, so an explicit
-    # category edit has to steer that query.
-    if edits.get("category_id"):
-        source["category_id_override"] = edits["category_id"]
-    if edits.get("aspects") and source.get("verified_brand"):
-        # normalize_source requires Brand to match verified_brand; keep them consistent
-        # when a reviewer rewrites the specifics without touching Brand.
-        source["aspects"].setdefault("Brand", [source["verified_brand"]])
-    return source
-
-
 # ----------------------------------------------------------------------------- syncing
 
-def sync_drafts(
-    drafts: list[dict[str, Any]],
-    *,
-    client_factory=client,
-    publish_cells: dict[str, str] | None = None,
-) -> dict[str, Any]:
+def sync_drafts(drafts: list[dict[str, Any]], *, client_factory=client) -> dict[str, Any]:
     """Upsert one row per draft. Never raises — a Sheets outage must not lose a draft,
     which is already safely on disk under state/drafts/.
-
-    ``publish_cells`` maps draft ID to the reviewer's current Publish? value, so a
-    status refresh after a failed publish does not silently un-approve the row.
     """
     if disabled():
         return {"status": "skipped", "written": 0, "error": "DRAFT_SHEET_DISABLED"}
     if not drafts:
         return {"status": "synced", "written": 0, "error": ""}
-    ticks = publish_cells or {}
     try:
         sheet = client_factory()
         written = sheet.upsert_rows(
-            [
-                (str(draft["draft_id"]), draft_row(draft, ticks.get(str(draft["draft_id"]))))
-                for draft in drafts
-            ],
+            [(str(draft["draft_id"]), draft_row(draft)) for draft in drafts],
             # USER_ENTERED so the Thumbnail =IMAGE() formula renders as a picture.
             value_input="USER_ENTERED",
         )
@@ -355,30 +262,11 @@ def read_all_rows(*, client_factory=client) -> list[dict[str, Any]]:
     ]
 
 
-def read_approved(*, client_factory=client) -> list[dict[str, Any]]:
-    """Rows the reviewer ticked: [{draft_id, row, values}]. Raises on a Sheets failure —
-    publishing must not silently list nothing (or worse, the wrong thing)."""
-    if disabled():
-        return []
-    sheet = client_factory()
-    sheet.ensure_sheet()
-    approved: list[dict[str, Any]] = []
-    for row_number, values in sheet.read_rows():
-        if not is_approved(values[COL["Publish?"]] if COL["Publish?"] < len(values) else ""):
-            continue
-        approved.append({
-            "draft_id": str(values[0]).strip(),
-            "row": row_number,
-            "values": values,
-        })
-    return approved
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("sync", help="Upsert every stored draft into the Drafts tab")
-    sub.add_parser("approved", help="Print the draft IDs currently ticked Publish? = YES")
+    sub.add_parser("sync", help="Rebuild the Drafts tab from state/drafts/")
+    sub.add_parser("pending", help="Print the drafts still waiting to be published")
     args = parser.parse_args()
     import draft_store
 
@@ -386,7 +274,11 @@ def main() -> int:
         if args.command == "sync":
             print(json.dumps(sync_drafts(draft_store.load_all()), indent=2))
         else:
-            print(json.dumps([item["draft_id"] for item in read_approved()], indent=2))
+            print(json.dumps([
+                {"draft_id": item["draft_id"], "batch": item.get("run_stamp", ""),
+                 "status": item.get("status", ""), "parked": draft_store.is_parked(item)}
+                for item in draft_store.pending()
+            ], indent=2))
         return 0
     except (SheetSyncError, OSError, ValueError) as exc:
         print(json.dumps({"status": "error", "error": str(exc)}))
