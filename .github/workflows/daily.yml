@@ -1,22 +1,25 @@
 name: Daily eBay auto-lister
 
-# AUTOMATION IS LIVE — runs daily at 09:00 IST (03:30 UTC).
+# AUTOMATION IS PAUSED — this workflow runs only when you press the button.
 #
-# DRAFT-FIRST IS THE DEFAULT. A scheduled run sources two products (repository variable
-# PRODUCTS_PER_RUN changes that — set it to 1 for a single product a day), enriches and
+# DRAFT-FIRST IS THE DEFAULT. A run sources two products (repository variable
+# PRODUCTS_PER_RUN changes that, or choose 1 in the Run workflow dialog), enriches and
 # validates them, and saves them as DRAFTS for review — it creates nothing on eBay.
 # You review them in the workbook's "Drafts" tab, tick Publish? = YES on the ones you
 # want, and run the "Publish approved eBay drafts" workflow.
 #
-# To go back to hands-off automatic listing, set the repository variable
-# LISTING_MODE=auto. Scheduled runs then publish immediately again, exactly as before.
-# Manual dispatch ignores LISTING_MODE and uses the mode you pick.
+# LISTING_MODE=auto makes a *scheduled* run publish immediately instead of drafting.
+# With the schedule off it has no effect at all. Manual dispatch has always ignored it
+# and uses the mode you pick.
 #
-# To pause entirely, comment out the `schedule` block below (or disable the workflow in
-# the Actions tab).
+# THE DAILY SCHEDULE IS OFF. Nothing runs on its own: this workflow now only starts when
+# you press the button (Actions → Daily eBay auto-lister → Run workflow).
+#
+# To turn the daily run back on, uncomment the two `schedule` lines below. That restores
+# 09:00 IST exactly as before; everything downstream still understands a scheduled run.
 on:
-  schedule:
-    - cron: "30 3 * * *"  # 09:00 IST daily (IST is UTC+5:30, no DST); may start a few minutes late
+  # schedule:
+  #   - cron: "30 3 * * *"  # 09:00 IST daily (IST is UTC+5:30, no DST); may start a few minutes late
   workflow_dispatch:
     inputs:
       mode:
