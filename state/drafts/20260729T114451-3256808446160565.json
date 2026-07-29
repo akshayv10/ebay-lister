@@ -1,0 +1,127 @@
+{
+  "created_at": "2026-07-29T06:16:23Z",
+  "draft_id": "20260729T114451-3256808446160565",
+  "ebay_url": "",
+  "listing_id": "",
+  "notes": [],
+  "product_id": "3256808446160565",
+  "publish_allowed": false,
+  "publish_error": "",
+  "published": false,
+  "run_stamp": "20260729T114451",
+  "source": {
+    "aliexpress_orders": 3510.0,
+    "aliexpress_rating": 4.865,
+    "aliexpress_url": "https://www.aliexpress.us/item/3256808446160565.html",
+    "appeal_reason": "top seller in niche (3510 orders)",
+    "appeal_score": 3510.0,
+    "aspects": {
+      "Brand": [
+        "Unbranded"
+      ],
+      "Color": [
+        "Silver, Green (PCB)"
+      ],
+      "Compatible Brand": [
+        "Intel"
+      ],
+      "Custom Bundle": [
+        "No"
+      ],
+      "Features": [
+        "14 Cores, 2.4 GHz Base Frequency, LGA 2011-3 Socket"
+      ],
+      "MPN": [
+        "N/A"
+      ],
+      "Material": [
+        "Silicon, Metal"
+      ],
+      "Model": [
+        "E5-2680 V4"
+      ],
+      "Modified Item": [
+        "No"
+      ],
+      "Number of Items": [
+        "1"
+      ],
+      "Type": [
+        "CPU Processor"
+      ]
+    },
+    "assigned_niche": "Smartphone Accessories",
+    "category_query": "Intel Xeon E5 2680 V4 processor 2.4GHz 14-cores 120W LGA 2011-3 2680V4 CPU",
+    "condition": "NEW",
+    "functional_fingerprint": "intel xeon e5 2680 v4 processor 2 4ghz 14 cores 120w lga 2011 3 2680v4 cpu",
+    "inventory_item_group_key": "",
+    "listing_description": "<p>High-performance Intel Xeon E5-2680 V4 processor features 14 cores at 2.4GHz providing efficient multitasking and server-grade computing power.</p><p>This CPU addresses demanding data processing and virtualization needs by delivering reliable, multi-threaded performance with a 120W thermal design power for balanced energy use.</p><h3>Key Features</h3><ul><li><strong>14 Cores / 28 Threads:</strong> Handles multitasking and parallel workloads for servers and workstations.</li><li><strong>Base Clock 2.4GHz:</strong> Consistent processing speed for balanced performance and energy efficiency.</li><li><strong>LGA 2011-3 Socket:</strong> Compatible with select motherboards supporting Intel Broadwell architecture.</li><li><strong>120W TDP:</strong> Optimized thermal design for stable operation under load.</li></ul><hr><h3>Specifications</h3><ul><li>Model: Intel Xeon E5-2680 V4</li><li>CPU Socket: LGA 2011-3 (Socket R3)</li><li>Core Count: 14 cores / 28 threads</li><li>Base Frequency: 2.4GHz</li><li>Thermal Design Power (TDP): 120 Watts</li><li>Weight: Approx. 45g / 1.59oz</li><li>Dimensions: 5.25cm x 5.25cm / 2.07in x 2.07in (typical processor size)</li></ul>",
+    "listing_title": "Intel Xeon E5-2680 V4 14-Core 2.4GHz Server CPU LGA 2011-3 Socket 120W",
+    "local_calendar_date": "2026-07-29",
+    "mode": "ebay_api",
+    "product_id": "3256808446160565",
+    "run_id": "20260729T114451-product-3256808446160565",
+    "selected_variants": [
+      {
+        "delivered_total": "15.80",
+        "expected_ebay_price": "65.00",
+        "id": "default",
+        "options": {},
+        "quantity": 1,
+        "sku": "ALI-3256808446160565-default-37a8eec1",
+        "visible_item_price": "15.80"
+      }
+    ],
+    "source_images": [
+      "https://ae-pic-a1.aliexpress-media.com/kf/S93fe93d9f74448dd846ffcf7f4285727d.png",
+      "https://ae-pic-a1.aliexpress-media.com/kf/Scd0c304faeb149a9b0f8d6e74f26613b6.jpg"
+    ],
+    "source_title": "Intel Xeon E5 2680 V4 processor 2.4GHz 14-cores 120W LGA 2011-3 2680V4 CPU",
+    "verified_brand": "Unbranded"
+  },
+  "spare_images": [],
+  "status": "draft",
+  "updated_at": "2026-07-29T06:16:23Z",
+  "validation": {
+    "category_id": "164",
+    "normalized_aspects": {
+      "Brand": [
+        "Unbranded"
+      ],
+      "Color": [
+        "Silver, Green (PCB)"
+      ],
+      "Compatible Brand": [
+        "Intel"
+      ],
+      "Custom Bundle": [
+        "No"
+      ],
+      "Features": [
+        "14 Cores, 2.4 GHz Base Frequency, LGA 2011-3 Socket"
+      ],
+      "MPN": [
+        "N/A"
+      ],
+      "Material": [
+        "Silicon, Metal"
+      ],
+      "Model": [
+        "E5-2680 V4"
+      ],
+      "Modified Item": [
+        "No"
+      ],
+      "Number of Items": [
+        "1"
+      ],
+      "Processor Model": [
+        "AMD A10-5700"
+      ],
+      "Type": [
+        "CPU Processor"
+      ]
+    },
+    "warnings": []
+  }
+}
